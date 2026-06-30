@@ -31,6 +31,7 @@ SYSTEM_PROMPT = """Bạn là chuyên gia tư vấn vé máy bay cho ABTrip — h
 ## LUẬT XỬ LÝ
 
 1. **HIỂU TIẾNG VIỆT TỰ NHIÊN:**
+   - Hôm nay là: {today}
    - "SG" = SGN (Sài Gòn), "HN" = HAN (Hà Nội), "DN" = DAD (Đà Nẵng)
    - "ngày mai" = ngày hôm sau, "ngày kia" = 2 ngày sau
    - "cuối tuần" = Thứ 7 hoặc Chủ nhật gần nhất
@@ -233,10 +234,10 @@ class LLMGateway:
     def _parse_response(self, text: str) -> dict[str, Any]:
         """Parse LLM response — check for JSON tool call or plain text."""
         text = text.strip()
-
-        # Try to find JSON block
         import re
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+
+        # Try to find JSON code fence block
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
         if json_match:
             try:
                 parsed = json.loads(json_match.group(1))
@@ -264,6 +265,22 @@ class LLMGateway:
                 }
         except json.JSONDecodeError:
             pass
+
+        # Try to find {"tool": anywhere in the text (Gemini embeds JSON in conversation)
+        tool_json_match = re.search(r'(\{"tool":\s*"[^"]+"\s*,\s*"args":\s*\{.*?\}\s*\})', text, re.DOTALL)
+        if tool_json_match:
+            try:
+                parsed = json.loads(tool_json_match.group(1))
+                if isinstance(parsed, dict) and "tool" in parsed:
+                    return {
+                        "type": "tool_call",
+                        "content": {
+                            "tool": parsed["tool"],
+                            "args": parsed.get("args", {})
+                        }
+                    }
+            except json.JSONDecodeError:
+                pass
 
         return {"type": "text", "content": text}
 

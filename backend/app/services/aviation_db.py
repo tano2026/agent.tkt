@@ -75,7 +75,7 @@ AIRPORTS: dict[str, dict] = {
             "aliases": ["los angeles", "la", "mỹ", "my"]},
     "SYD": {"name": "Sydney", "city": "Sydney", "vietnam": False,
             "aliases": ["sydney", "úc", "uc", "australia"]},
-    "SGN_BKK": {"name": "SGN→BKK", "city": "SGN→BKK", "vietnam": False},  # Compound
+    "SGN_BKK": {"name": "SGN→BKK", "city": "SGN→BKK", "vietnam": False, "aliases": []},
 }
 
 # ─── AIRLINES ────────────────────────────────────────────────────────────────

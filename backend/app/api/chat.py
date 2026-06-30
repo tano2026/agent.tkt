@@ -95,27 +95,45 @@ SUGGESTIONS = {
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Handle chat message for any agent."""
-    agent = request.agent if request.agent in ("ticketing", "sim", "visa") else "ticketing"
-    session_id = request.session_id or str(uuid.uuid4())
+    import traceback as tb_mod
+    try:
+        agent = request.agent if request.agent in ("ticketing", "sim", "visa") else "ticketing"
+        session_id = request.session_id or str(uuid.uuid4())
 
-    # Get or create session history
-    if session_id not in _sessions:
-        _sessions[session_id] = []
-    history = _sessions[session_id]
+        # Get or create session history
+        if session_id not in _sessions:
+            _sessions[session_id] = []
+        history = _sessions[session_id]
 
-    # Get LLM response
-    llm = get_llm()
-    system = AGENT_SYSTEM_EXTENSIONS.get(agent, "") + "\n" + llm.SYSTEM_PROMPT if hasattr(llm, 'SYSTEM_PROMPT') else AGENT_SYSTEM_EXTENSIONS.get(agent, "")
+        # Get LLM response
+        llm = get_llm()
+        system = AGENT_SYSTEM_EXTENSIONS.get(agent, "")
 
-    # Import aviation data for system prompt (for ticketing)
-    from app.services.aviation_db import get_airport_dict_for_prompt, get_airline_dict_for_prompt
-    full_system = system.replace("{airport_info}", get_airport_dict_for_prompt()).replace("{airline_info}", get_airline_dict_for_prompt())
+        # Import aviation data for system prompt (for ticketing)
+        from app.services.aviation_db import get_airport_dict_for_prompt, get_airline_dict_for_prompt
+        from app.services.llm_gateway import SYSTEM_PROMPT as FULL_SYSTEM_PROMPT
+        from datetime import datetime
+        today = datetime.now().strftime("%d/%m/%Y")
+        full_prompt = system + "\n\n" + FULL_SYSTEM_PROMPT.replace("{airport_info}", get_airport_dict_for_prompt()).replace("{airline_info}", get_airline_dict_for_prompt())
+        full_prompt = full_prompt.replace("{today}", today)
+        full_system = full_prompt
 
-    response = await llm.chat(
-        message=request.message,
-        history=history,
-        system_override=full_system,
-    )
+        response = await llm.chat(
+            message=request.message,
+            history=history,
+            system_override=full_system,
+        )
+    except Exception as exc:
+        tb = tb_mod.format_exc()
+        logger.error("Chat error: %s\n%s", exc, tb)
+        history.append({"role": "user", "content": request.message})
+        history.append({"role": "assistant", "content": f"❌ Lỗi: {exc}"})
+        return ChatResponse(
+            type="error",
+            content=tb,
+            session_id=session_id or "",
+            suggestions=[],
+        )
 
     # Handle tool calls
     if response["type"] == "tool_call":

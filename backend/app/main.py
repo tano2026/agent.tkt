@@ -98,12 +98,15 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     """Catch unhandled exceptions and return a structured error response."""
     logger = logging.getLogger(__name__)
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    import traceback
+    tb = traceback.format_exc()
     return JSONResponse(
         status_code=500,
         content={
             "StatusCode": "500",
             "Success": False,
             "Message": f"Internal server error: {str(exc)}",
+            "Traceback": tb,
         },
     )
 
