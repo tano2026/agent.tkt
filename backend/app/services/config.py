@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # CORS
     frontend_origin: str = "http://localhost:4321"
 
+    # Google Gemini API (for LLM chat)
+    gemini_api_key: str = ""
+
     # Redis (optional, for caching reference data)
     redis_url: str = ""
 

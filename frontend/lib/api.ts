@@ -1,136 +1,109 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8765';
 
-interface ApiRequest {
-  PrivateKey: string;
-  ApiAccount: string;
-  ApiPassword: string;
-  [key: string]: any;
+// ─── Chat API (new) ──────────────────────────────────────────────────────────
+
+export interface Message {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  type?: 'text';
+  data?: any;
 }
 
-interface ApiResponse {
-  StatusCode?: string;
-  Success?: boolean;
-  Message?: string;
-  Result?: any;
-  [key: string]: any;
+export interface ChatResponse {
+  type: 'text' | 'tool_call' | 'error' | 'booking_result';
+  content: string | Record<string, any>;
+  session_id: string;
+  suggestions: string[];
 }
 
-const DEFAULT_AUTH: Pick<ApiRequest, 'PrivateKey' | 'ApiAccount' | 'ApiPassword'> = {
-  PrivateKey: process.env.NEXT_PUBLIC_PRIVATE_KEY || '3c091b43-8d4f-4f09-bf63-5f5347c24123',
-  ApiAccount: process.env.NEXT_PUBLIC_API_ACCOUNT || 'tulike30',
-  ApiPassword: process.env.NEXT_PUBLIC_API_PASSWORD || 'Tulike123@',
-};
+export interface AgentInfo {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  gradient: string;
+}
 
-async function callApi(action: string, params: Record<string, any> = {}): Promise<ApiResponse> {
-  const body: ApiRequest = {
-    ...DEFAULT_AUTH,
-    Action: action,
-    ...params,
-  };
-
-  const response = await fetch(`${BACKEND_URL}/api`, {
+export async function sendChatMessage(
+  agent: string,
+  message: string,
+  sessionId?: string
+): Promise<ChatResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent, message, session_id: sessionId }),
   });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
 
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+export async function getAgents(): Promise<AgentInfo[]> {
+  const res = await fetch(`${BACKEND_URL}/api/agents`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.agents || [];
+}
+
+// ─── Search/Book API (old, used by search/ and book/ pages) ──────────────────
+
+export interface SearchParams {
+  startPoint?: string;
+  endPoint?: string;
+  origin?: string;
+  destination?: string;
+  departDate: string;
+  returnDate?: string;
+  adt?: number;
+  chd?: number;
+  inf?: number;
+  directFlight?: boolean;
+  [key: string]: any;
+}
+
+export async function searchFlights(params: SearchParams): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/flights/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+  return res.json();
+}
+
+export interface BookParams {
+  bookingCode?: string;
+  session?: string;
+  sessionCode?: string;
+  passengers?: any[];
+  contactInfo?: any;
+  flightInfo?: any;
+  [key: string]: any;
+}
+
+export async function bookFlight(params: BookParams): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/flights/book`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`Booking failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getChatHistory(sessionId: string): Promise<Message[]> {
+  const res = await fetch(`${BACKEND_URL}/api/chat/history/${sessionId}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.messages || [];
+}
+
+export async function getAirports(): Promise<any> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/reference/airports`);
+    if (!res.ok) return { StatusCode: '500', Result: [] };
+    return await res.json();
+  } catch {
+    return { StatusCode: '500', Result: [] };
   }
-
-  return response.json();
 }
-
-/**
- * Get list of airports
- */
-export async function getAirports(): Promise<ApiResponse> {
-  return callApi('GetAirports');
-}
-
-/**
- * Get list of airlines
- */
-export async function getAirlines(): Promise<ApiResponse> {
-  return callApi('GetAirlines');
-}
-
-/**
- * Search for flights
- */
-export async function searchFlights(params: {
-  origin: string;
-  destination: string;
-  departDate: string; // DDMMYYYY
-  returnDate?: string; // DDMMYYYY
-  adults: number;
-  children?: number;
-  infants?: number;
-  cabinClass?: string;
-}): Promise<ApiResponse> {
-  return callApi('SearchFlight', {
-    DepartAirport: params.origin,
-    ArrivalAirport: params.destination,
-    DepartDate: params.departDate,
-    ReturnDate: params.returnDate || '',
-    Adult: params.adults,
-    Children: params.children || 0,
-    Infant: params.infants || 0,
-    CabinClass: params.cabinClass || 'economy',
-  });
-}
-
-/**
- * Book a flight
- */
-export async function bookFlight(params: {
-  sessionCode: string;
-  passengers: Array<{
-    title: string;
-    lastName: string;
-    firstName: string;
-    gender: string;
-    birthDate: string; // DDMMYYYY
-    passportNumber?: string;
-    passportExpiry?: string; // DDMMYYYY
-    nationality?: string;
-    type: 'adult' | 'child' | 'infant';
-  }>;
-}): Promise<ApiResponse> {
-  return callApi('BookFlight', {
-    SessionCode: params.sessionCode,
-    Passengers: params.passengers.map((p) => ({
-      Title: p.title,
-      LastName: p.lastName,
-      FirstName: p.firstName,
-      Gender: p.gender,
-      BirthDate: p.birthDate,
-      PassportNumber: p.passportNumber || '',
-      PassportExpiry: p.passportExpiry || '',
-      Nationality: p.nationality || 'VN',
-      Type: p.type,
-    })),
-  });
-}
-
-/**
- * Issue tickets for a booking
- */
-export async function issueTicket(bookingCode: string): Promise<ApiResponse> {
-  return callApi('IssueTicket', {
-    BookingCode: bookingCode,
-  });
-}
-
-/**
- * Get booking details by code
- */
-export async function getBookingDetail(bookingCode: string): Promise<ApiResponse> {
-  return callApi('BookingDetail', {
-    BookingCode: bookingCode,
-  });
-}
-
-export type { ApiRequest, ApiResponse };

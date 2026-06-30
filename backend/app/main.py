@@ -19,8 +19,10 @@ from fastapi.responses import JSONResponse
 from app.api.bookings import router as bookings_router
 from app.api.reference import router as reference_router
 from app.api.health import router as health_router
+from app.api.chat import router as chat_router
 from app.services.config import get_settings
 from app.services.abtrip_client import close_client
+from app.services.llm_gateway import close_llm
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -54,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     logger.info("ABTrip backend shutting down...")
     await close_client()
+    await close_llm()
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +115,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 app.include_router(bookings_router)
 app.include_router(reference_router)
 app.include_router(health_router)
+app.include_router(chat_router)
 
 
 # ---------------------------------------------------------------------------

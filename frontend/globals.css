@@ -29,3 +29,30 @@
     @apply card hover:shadow-md hover:border-primary-200 transition-all duration-200;
   }
 }
+
+/* Custom scrollbar for chat */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
+}
+
+/* Animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* Prevent iOS zoom on focus */
+input, textarea, select {
+  font-size: 16px !important;
+}
