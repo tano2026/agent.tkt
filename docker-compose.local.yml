@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  abtrip-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4321:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8765
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - abtrip-backend
+    networks:
+      - abtrip-network
+
+  abtrip-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8765:8000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://user:password@abtrip-db:5432/abtripdb
+      - REDIS_URL=redis://abtrip-redis:6379/0
+      - AGT_API_HOST=${AGT_API_HOST}
+      - AGT_PRIVATE_KEY=${AGT_PRIVATE_KEY}
+      - AGT_API_ACCOUNT=${AGT_API_ACCOUNT}
+      - AGT_API_PASSWORD=${AGT_API_PASSWORD}
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    depends_on:
+      abtrip-db:
+        condition: service_healthy
+      abtrip-redis:
+        condition: service_started
+    networks:
+      - abtrip-network
+
+  abtrip-db:
+    image: postgres:15-alpine
+    ports:
+      - "5987:5432"
+    environment:
+      - POSTGRES_DB=abtripdb
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d abtripdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - abtrip-network
+
+  abtrip-redis:
+    image: redis:7-alpine
+    ports:
+      - "7103:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - abtrip-network
+
+volumes:
+  db_data:
+  redis_data:
+
+networks:
+  abtrip-network:
+    driver: bridge
