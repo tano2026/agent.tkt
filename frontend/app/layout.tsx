@@ -3,12 +3,12 @@ import '@/globals.css';
 import Header from '@/components/Header';
 
 export const metadata: Metadata = {
-  title: 'ABTrip - Đặt vé máy bay trực tuyến',
-  description: 'Hệ thống đặt vé máy bay trực tuyến - ABTrip. Tìm kiếm và đặt vé máy bay giá rẻ với nhiều hãng hàng không.',
-  keywords: ['vé máy bay', 'đặt vé', 'ABTrip', 'vé giá rẻ', 'Vietnam Airlines', 'VietJet', 'Bamboo Airways'],
+  title: 'ABTrip - Đặt vé máy bay, Tour, Visa & Hộ chiếu',
+  description: 'Hệ thống đặt vé máy bay, tour du lịch và hỗ trợ visa hộ chiếu trực tuyến - ABTrip. Dịch vụ du lịch toàn diện.',
+  keywords: ['vé máy bay', 'đặt vé', 'ABTrip', 'tour du lịch', 'visa', 'hộ chiếu', 'du lịch'],
   openGraph: {
-    title: 'ABTrip - Đặt vé máy bay trực tuyến',
-    description: 'Hệ thống đặt vé máy bay trực tuyến - ABTrip',
+    title: 'ABTrip - Dịch vụ du lịch toàn diện',
+    description: 'Đặt vé máy bay, tour du lịch và hỗ trợ visa hộ chiếu',
     type: 'website',
   },
 };
@@ -32,7 +32,7 @@ export default function RootLayout({
                 <div>
                   <h3 className="text-white font-semibold mb-3">ABTrip</h3>
                   <p className="text-sm">
-                    Hệ thống đặt vé máy bay trực tuyến hàng đầu Việt Nam.
+                    Hệ thống đặt vé máy bay, tour du lịch và hỗ trợ visa hộ chiếu hàng đầu Việt Nam.
                   </p>
                 </div>
                 <div>
@@ -41,10 +41,10 @@ export default function RootLayout({
                   <p className="text-sm">Hotline: 1900 XXX XXX</p>
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold mb-3">Hỗ trợ</h3>
-                  <p className="text-sm">Trung tâm trợ giúp</p>
-                  <p className="text-sm">Chính sách đổi trả</p>
-                  <p className="text-sm">Điều khoản sử dụng</p>
+                  <h3 className="text-white font-semibold mb-3">Dịch vụ</h3>
+                  <p className="text-sm">Đặt vé máy bay</p>
+                  <p className="text-sm">Tour du lịch</p>
+                  <p className="text-sm">Visa & Hộ chiếu</p>
                 </div>
               </div>
               <div className="border-t border-gray-700 mt-8 pt-6 text-center text-sm">
