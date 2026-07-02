@@ -18,14 +18,17 @@ class Settings(BaseSettings):
     agt_api_password: str = ""
 
     # Backend server configuration
-    backend_port: int = 8000
+    backend_port: int = 8138
     backend_host: str = "0.0.0.0"
 
     # CORS
     frontend_origin: str = "http://localhost:4321"
-
     # Google Gemini API (for LLM chat)
     gemini_api_key: str = ""
+
+    # OmniRoute API (for LLM chat)
+    omniroute_api_key: str = ""
+    omniroute_base_url: str = "http://100.64.173.75:20128/v1"
 
     # Redis (optional, for caching reference data)
     redis_url: str = ""
