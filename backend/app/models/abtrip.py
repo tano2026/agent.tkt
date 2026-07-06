@@ -3,11 +3,13 @@ Pydantic models for all AGT (ABTrip) API entities.
 
 These models represent the request/response structures used by the
 external AGT cấp 1 API at https://api.abtrip.vn.
+
+NOTE: Python 3.14.4 + Pydantic 2.12.5 bug — fields with type annotations
+that match the field name (e.g. RequestInfo: RequestInfo) cause
+"unevaluable-type-annotation". Workaround: use alias + lowercase field name.
 """
 
-from __future__ import annotations
-
-from typing import Any, Optional
+from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -47,12 +49,12 @@ class Route(BaseModel):
 
 class SearchFlightRequest(BaseModel):
     """Request body for POST /Flight/SearchFlight."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
     System: str = ""
     Adt: int = 1
     Chd: int = 0
     Inf: int = 0
-    ListRoute: list[Route] = Field(default_factory=list)
+    ListRoute: List[Route] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +95,7 @@ class AirportFee(BaseModel):
     Leg: int = 0
     Price: float = 0.0
     Currency: str = "VND"
-    Items: list[dict[str, Any]] = Field(default_factory=list)
+    Items: List[dict[str, Any]] = Field(default_factory=list)
 
 
 class Baggage(BaseModel):
@@ -120,8 +122,8 @@ class AirOption(BaseModel):
     FareClass: str = ""
     Price: float = 0.0
     Currency: str = "VND"
-    ListBaggage: list[Baggage] = Field(default_factory=list)
-    ListAirportFee: list[AirportFee] = Field(default_factory=list)
+    ListBaggage: List[Baggage] = Field(default_factory=list)
+    ListAirportFee: List[AirportFee] = Field(default_factory=list)
 
 
 class PaymentInfo(BaseModel):
@@ -134,15 +136,15 @@ class PaymentInfo(BaseModel):
 
 class BookFlightRequest(BaseModel):
     """Request body for POST /Flight/BookFlight."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
     Forced: bool = False
     System: str = ""
-    GuestContact: GuestContact = Field(default_factory=GuestContact)
-    AgentContact: AgentContact = Field(default_factory=AgentContact)
-    ListPassenger: list[Passenger] = Field(default_factory=list)
-    ListAirOption: list[AirOption] = Field(default_factory=list)
+    guest_contact: GuestContact = Field(default_factory=GuestContact, alias="GuestContact")
+    agent_contact: AgentContact = Field(default_factory=AgentContact, alias="AgentContact")
+    ListPassenger: List[Passenger] = Field(default_factory=list)
+    ListAirOption: List[AirOption] = Field(default_factory=list)
     Option: str = ""
-    Payment: PaymentInfo = Field(default_factory=PaymentInfo)
+    payment: PaymentInfo = Field(default_factory=PaymentInfo, alias="Payment")
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +153,7 @@ class BookFlightRequest(BaseModel):
 
 class IssueTicketRequest(BaseModel):
     """Request body for POST /Flight/IssueTicket."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
     BookingCode: str = ""
 
 
@@ -161,7 +163,7 @@ class IssueTicketRequest(BaseModel):
 
 class RetrieveBookingRequest(BaseModel):
     """Request body for POST /Flight/RetrieveBooking."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
     BookingCode: str = ""
 
 
@@ -171,20 +173,20 @@ class RetrieveBookingRequest(BaseModel):
 
 class AncillaryRequest(BaseModel):
     """Request body for POST /Flight/GetAncillary."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
-    ListSession: list[SessionInfo] = Field(default_factory=list)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
+    ListSession: List[SessionInfo] = Field(default_factory=list)
 
 
 class FareRuleRequest(BaseModel):
     """Request body for POST /Flight/GetFareRule."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
-    ListSession: list[SessionInfo] = Field(default_factory=list)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
+    ListSession: List[SessionInfo] = Field(default_factory=list)
 
 
 class SeatMapRequest(BaseModel):
     """Request body for POST /Flight/GetSeatMap."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
-    ListSession: list[SessionInfo] = Field(default_factory=list)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
+    ListSession: List[SessionInfo] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +195,7 @@ class SeatMapRequest(BaseModel):
 
 class ReferenceRequest(BaseModel):
     """Generic request for reference data endpoints (GetAirports, etc.)."""
-    RequestInfo: RequestInfo = Field(default_factory=RequestInfo)
+    request_info: RequestInfo = Field(default_factory=RequestInfo, alias="RequestInfo")
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +218,8 @@ class BookingInfo(BaseModel):
     TotalPrice: Optional[float] = None
     Currency: Optional[str] = None
     Status: Optional[str] = None
-    ListTicket: Optional[list[dict[str, Any]]] = None
-    ListBooking: Optional[list[dict[str, Any]]] = None
+    ListTicket: Optional[List[dict[str, Any]]] = None
+    ListBooking: Optional[List[dict[str, Any]]] = None
 
 
 class BookFlightResponse(BaseModel):
@@ -228,7 +230,7 @@ class BookFlightResponse(BaseModel):
     OrderId: Optional[str] = None
     OrderCode: Optional[str] = None
     TotalPrice: Optional[float] = None
-    ListBooking: Optional[list[dict[str, Any]]] = None
+    ListBooking: Optional[List[dict[str, Any]]] = None
 
 
 class IssueTicketResponse(BaseModel):
