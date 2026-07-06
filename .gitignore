@@ -1,14 +1,40 @@
+# Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-node_modules/
-.next/
+*.egg-info/
 dist/
 build/
+*.egg
+.venv/
+venv/
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
 *.log
+backend.log
+
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Node
+node_modules/
+.next/
+out/
+.npm/
+
+# Runtime
+debug_*.txt
+debug_*.json
+tmp/
+temp/
