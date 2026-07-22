@@ -30,11 +30,7 @@ class Settings(BaseSettings):
     omniroute_base_url: str = "http://100.64.173.75:20128/v1"
     omniroute_model: str = "tllm/claude_haiku_3_5"
 
-    # HHTech API
-    hhtech_api_key: str = ""
-    hhtech_base_url: str = "https://hhtechapi.com/v1"
-    
-    # HHTech API - Dual Model System
+    # HHTech API - Double Model System
     # Sonnet tier (for regular chat - fast, cheap)
     hhtech_sonnet_model: str = "claude-sonnet-4-5"
     hhtech_sonnet_backup1: str = "claude-sonnet-4-6"
@@ -50,11 +46,6 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
-
-    # LLM Gateway
-    llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
 
     model_config = {
         "env_file": ".env",

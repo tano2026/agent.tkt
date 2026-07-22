@@ -15,6 +15,12 @@ const WELCOME_MESSAGES: Record<string, string> = {
   visa: 'Xin chào! Tôi là chuyên gia tư vấn Visa & Hộ chiếu. Bạn muốn tìm hiểu thủ tục đi nước nào?\n\n💡 Ví dụ: "visa Nhật cần gì?" hoặc "thủ tục xin visa Hàn Quốc"',
 };
 
+const LOADING_DOTS = [
+  { delay: '0ms' },
+  { delay: '200ms' },
+  { delay: '400ms' },
+];
+
 export default function ChatInterface({ agent }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: WELCOME_MESSAGES[agent] || WELCOME_MESSAGES.ticketing },
@@ -76,11 +82,11 @@ export default function ChatInterface({ agent }: ChatInterfaceProps) {
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ height: 'calc(100vh - 180px)' }}>
+    <div className="flex flex-col h-full" style={{ height: 'calc(100vh - 130px)' }}>
       {/* Messages area */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-y-auto py-4 space-y-3 scroll-smooth"
+        className="flex-1 overflow-y-auto py-6 space-y-4 scroll-smooth"
         style={{ scrollBehavior: 'smooth' }}
       >
         {messages.map((msg, i) => (
@@ -92,27 +98,29 @@ export default function ChatInterface({ agent }: ChatInterfaceProps) {
           />
         ))}
 
-        {/* Loading indicator */}
+        {/* Loading indicator — ChatGPT-style dots */}
         {isLoading && (
-          <div className="flex justify-start px-3 sm:px-4">
-            <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
+          <div className="flex justify-start px-4 sm:px-6">
+            <div className="flex items-center gap-1.5 px-1 py-1">
+              {LOADING_DOTS.map((dot, i) => (
+                <span
+                  key={i}
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-pulse-dot"
+                  style={{ animationDelay: dot.delay }}
+                />
+              ))}
             </div>
           </div>
         )}
 
         {/* Suggestions */}
         {suggestions.length > 0 && !isLoading && (
-          <div className="flex flex-wrap gap-2 px-3 sm:px-4 pt-1">
+          <div className="flex flex-wrap gap-2 px-4 sm:px-6 pt-1">
             {suggestions.map((s, i) => (
               <button
                 key={i}
                 onClick={() => handleSuggestionClick(s)}
-                className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-full hover:bg-blue-100 transition-colors active:scale-95"
+                className="px-3.5 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors active:scale-95"
               >
                 {s}
               </button>

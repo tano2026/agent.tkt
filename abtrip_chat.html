@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ABTrip Chat Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-direction:column}
+.header{background:#006885;color:white;padding:16px 20px;text-align:center}
+.header h1{font-size:18px;margin:0}
+.header small{font-size:12px;opacity:.8}
+#chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:85%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.user{background:#006885;color:white;align-self:flex-end;border-radius:12px 12px 2px 12px}
+.bot{background:white;color:#333;align-self:flex-start;border-radius:12px 12px 12px 2px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.suggestions{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 8px}
+.suggestions button{background:#e8f4f8;border:1px solid #00688533;color:#006885;padding:6px 14px;border-radius:20px;font-size:13px;cursor:pointer}
+.suggestions button:hover{background:#d0eaf2}
+.input-bar{display:flex;padding:10px 16px;background:white;border-top:1px solid #ddd;gap:8px}
+.input-bar input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:24px;font-size:14px;outline:none}
+.input-bar input:focus{border-color:#006885}
+.input-bar button{background:#006885;color:white;border:none;padding:10px 20px;border-radius:24px;font-size:14px;cursor:pointer;font-weight:bold}
+.input-bar button:hover{background:#005570}
+.loading{opacity:.5}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>✈️ ABTrip Chat Bot</h1>
+  <small>Trợ lý đặt vé thông minh</small>
+</div>
+<div id="chat">
+  <div class="msg bot">✈️ Chào bạn! Tôi là trợ lý đặt vé của ABTrip.<br><br>• 🛩️ <b>Tìm vé</b> — "SG HN ngày mai 2 người"<br>• 🧳 <b>Hành lý</b> — "Hành lý VNA bao nhiêu kg?"<br>• 🔄 <b>Đổi/Hủy vé</b> — "Chính sách đổi vé VietJet"</div>
+</div>
+<div id="suggestions" class="suggestions">
+  <button onclick="send('SG HN ngày mai 2 người')">🏙️ SG→HN ngày mai</button>
+  <button onclick="send('từ Hà Nội vào SG ngày kia')">🏙️ HN→SG ngày kia</button>
+  <button onclick="send('hành lý VNA bao nhiêu kg')">🧳 Hành lý VNA</button>
+  <button onclick="send('hủy vé')">❌ Hủy vé</button>
+</div>
+<div class="input-bar">
+  <input id="input" placeholder="Nhập câu hỏi..." onkeydown="if(event.key==='Enter')send()">
+  <button onclick="send()">Gửi</button>
+</div>
+<script>
+const API = 'http://100.64.173.75:8138/api/chat';
+let sessionId = crypto.randomUUID();
+let pending = false;
+
+function addMsg(text, role) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  document.getElementById('chat').appendChild(div);
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+async function send(text) {
+  const input = document.getElementById('input');
+  const msg = text || input.value.trim();
+  if (!msg || pending) return;
+  input.value = '';
+  pending = true;
+  addMsg(msg, 'user');
+  const loading = document.createElement('div');
+  loading.className = 'msg bot loading';
+  loading.textContent = '⏳ Đang xử lý...';
+  document.getElementById('chat').appendChild(loading);
+  try {
+    const r = await fetch(API, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg, session_id: sessionId})
+    });
+    const d = await r.json();
+    loading.remove();
+    const reply = d.reply || 'Lỗi: không có response';
+    addMsg(reply, 'bot');
+    // Suggest buttons
+    const sugBox = document.getElementById('suggestions');
+    if (d.suggestions && d.suggestions.length) {
+      sugBox.innerHTML = d.suggestions.map(s => `<button onclick="send('${s.replace(/'/g,"\\'")}')">${s}</button>`).join('');
+    } else {
+      sugBox.innerHTML = `
+        <button onclick="send('SG HN ngày mai 2 người')">🏙️ SG→HN ngày mai</button>
+        <button onclick="send('hành lý VNA bao nhiêu kg')">🧳 Hành lý VNA</button>
+        <button onclick="send('hủy vé')">❌ Hủy vé</button>
+      `;
+    }
+  } catch(e) {
+    loading.remove();
+    addMsg('❌ Lỗi kết nối: ' + e.message, 'bot');
+  }
+  pending = false;
+}
+</script>
+</body>
+</html>

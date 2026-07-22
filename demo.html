@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ABTrip AI Agent — Demo Đặt Vé</title>
+<style>
+/* ═══ RESET & BASE ═══ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  background: #070b15;
+  min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 12px;
+  background-image: radial-gradient(ellipse at 20% 50%, rgba(59,130,246,0.06) 0%, transparent 60%),
+                    radial-gradient(ellipse at 80% 50%, rgba(139,92,246,0.05) 0%, transparent 60%);
+}
+
+/* ═══ CONTAINER ═══ */
+.container {
+  max-width: 420px; width: 100%;
+  background: #0f172acc; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 28px; overflow: hidden;
+  box-shadow: 0 25px 80px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04);
+  border: 1px solid #1e293b;
+}
+
+/* ═══ HEADER ═══ */
+.header {
+  padding: 18px 20px 12px;
+  display: flex; align-items: center; gap: 12px;
+}
+.header .logo-wrap {
+  width: 44px; height: 44px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 14px; display: flex; align-items: center; justify-content: center;
+  font-size: 22px; color: #fff;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.3);
+  position: relative;
+}
+.header .logo-wrap::after {
+  content: ''; position: absolute; inset: -2px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(59,130,246,0.3), rgba(139,92,246,0.3));
+  z-index: -1;
+}
+.header h1 { font-size: 17px; color: #f1f5f9; font-weight: 600; letter-spacing: -0.3px; }
+.header .subtitle {
+  font-size: 11px; color: #64748b; margin-top: 1px;
+  display: flex; align-items: center; gap: 6px;
+}
+.header .status-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #22c55e; display: inline-block;
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ═══ TABS ═══ */
+.tabs {
+  display: flex; gap: 2px;
+  padding: 6px 16px 0; position: relative;
+}
+.tab {
+  flex: 1; padding: 8px 6px; text-align: center;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all 0.25s;
+  color: #475569; background: transparent; border: none;
+  border-radius: 10px 10px 0 0;
+  position: relative;
+}
+.tab::after {
+  content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 0; height: 2px; background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  transition: width 0.3s; border-radius: 2px;
+}
+.tab.active { color: #e2e8f0; background: #1e293b; }
+.tab.active::after { width: 60%; }
+.tab:hover:not(.active) { color: #94a3b8; background: #1a2332; }
+
+/* ═══ CHAT AREA ═══ */
+.chat-area {
+  padding: 12px 14px 8px;
+  min-height: 340px; max-height: 520px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  scroll-behavior: smooth;
+}
+.chat-area::-webkit-scrollbar { width: 3px; }
+.chat-area::-webkit-scrollbar-track { background: transparent; }
+.chat-area::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+/* ═══ MESSAGES ═══ */
+.msg { display: flex; gap: 8px; max-width: 100%; animation: msgIn 0.3s ease-out; }
+@keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.msg.user { align-self: flex-end; flex-direction: row-reverse; }
+.msg.user .bubble {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff; border-bottom-right-radius: 3px;
+  box-shadow: 0 2px 8px rgba(37,99,235,0.25);
+}
+.msg.bot .bubble {
+  background: #1e293b; color: #e2e8f0; border-bottom-left-radius: 3px;
+  border: 1px solid #2a3649;
+}
+.msg.bot .avatar {
+  width: 30px; height: 30px; min-width: 30px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(59,130,246,0.2);
+}
+.bubble {
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 13px; line-height: 1.55;
+  position: relative; overflow-x: auto;
+}
+.bubble .time {
+  font-size: 9px; color: #475569; margin-top: 4px; text-align: right;
+  letter-spacing: 0.3px;
+}
+.msg.user .bubble .time { color: rgba(255,255,255,0.5); }
+
+/* ═══ TYPING ═══ */
+.typing { min-height: 28px; }
+.loading { display: flex; gap: 4px; align-items: center; padding: 8px 0; }
+.loading span {
+  width: 7px; height: 7px; background: #64748b; border-radius: 50%;
+  animation: bounce 1.2s infinite;
+}
+.loading span:nth-child(2) { animation-delay: 0.15s; }
+.loading span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+
+/* ═══ AIRLINE TABLE ═══ */
+.flight-table-wrap { margin: 4px 0; }
+.flight-header-route {
+  font-size: 13px; font-weight: 700;
+  padding: 6px 0 4px; color: #fbbf24;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.flight-header-route .copy-btn {
+  font-size: 10px; background: #334155; color: #94a3b8;
+  border: none; border-radius: 5px; padding: 3px 8px;
+  cursor: pointer; font-family: inherit;
+  transition: all 0.2s;
+}
+.flight-header-route .copy-btn:hover { background: #475569; color: #f1f5f9; }
+
+.airline-block {
+  margin: 4px 0;
+  animation: fadeSlide 0.35s ease-out;
+}
+@keyframes fadeSlide { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+.airline-title {
+  font-size: 11px; font-weight: 700;
+  padding: 4px 8px; margin: 4px 0 1px;
+  background: #0f172a; border-radius: 5px;
+  color: #e2e8f0; display: flex; justify-content: space-between;
+}
+.airline-title .price-hint { font-weight: 400; font-size: 10px; color: #64748b; }
+.airline-table {
+  width: 100%; border-collapse: collapse;
+  font-family: 'Courier New', 'Consolas', monospace;
+  font-size: 11px; background: #0f172a;
+  border-radius: 6px; overflow: hidden;
+}
+.airline-table th {
+  padding: 4px 6px; text-align: left;
+  color: #64748b; font-size: 10px;
+  border-bottom: 1px solid #1e293b;
+  font-weight: 500;
+}
+.airline-table td {
+  padding: 4px 6px; color: #e2e8f0;
+  border-bottom: 1px solid #1a2332;
+  white-space: nowrap;
+}
+.airline-table tr:last-child td { border-bottom: none; }
+.airline-table tr { cursor: pointer; transition: background 0.15s; }
+.airline-table tr:hover td { background: #1a2332; }
+.airline-table .price-cell { color: #22c55e; font-weight: 600; text-align: right; }
+.airline-table .badge-cell { color: #fbbf24; text-align: center; width: 24px; font-size: 10px; }
+.airline-table .code-cell { font-weight: 600; }
+.airline-table tr.selected td { background: #1e3a5f; }
+
+.summary-box {
+  background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+  padding: 8px 12px; margin-top: 6px; font-size: 12px;
+}
+
+/* ═══ SINGLE FLIGHT ═══ */
+.single-flight-box {
+  font-family: 'Courier New', 'Consolas', monospace;
+  background: linear-gradient(135deg, #0f172a 60%, #132031);
+  border: 1.5px solid #22c55e; border-radius: 10px;
+  padding: 10px 14px; margin: 4px 0;
+  animation: fadeSlide 0.3s ease-out;
+}
+.single-flight-box .flight-code { color: #fbbf24; font-size: 16px; font-weight: 700; }
+.single-flight-box .airline-name { color: #94a3b8; font-size: 11px; }
+.single-flight-box .time-row { color: #e2e8f0; font-size: 13px; margin: 5px 0; }
+.single-flight-box .price-big { color: #22c55e; font-size: 20px; font-weight: 700; }
+.single-flight-box .detail-row { display: flex; gap: 12px; margin: 3px 0; font-size: 11px; color: #94a3b8; }
+.single-flight-box .action-hint { color: #475569; font-size: 11px; margin-top: 6px; padding-top: 6px; border-top: 1px solid #1e293b; }
+
+/* ═══ SUGGESTIONS ═══ */
+.suggestions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.chip {
+  padding: 5px 10px; background: #0f172a; border: 1px solid #2a3649;
+  border-radius: 16px; font-size: 11px; color: #94a3b8;
+  cursor: pointer; transition: all 0.2s; user-select: none;
+}
+.chip:hover { background: #334155; color: #f1f5f9; border-color: #475569; }
+.chip:active { transform: scale(0.96); }
+
+/* ═══ CARDS (SIM/Visa) ═══ */
+.info-card { background: #0f172a; border: 1px solid #2a3649; border-radius: 8px; padding: 8px 10px; margin: 3px 0; }
+.info-card .item { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+.info-card .item .key { color: #94a3b8; }
+.info-card .item .val { color: #f1f5f9; font-weight: 500; }
+.price-tag { color: #22c55e; font-weight: 600; }
+
+/* ═══ STEP INDICATOR ═══ */
+.step-bar {
+  display: flex; gap: 6px; margin: 4px 0 8px;
+  font-size: 10px; color: #475569;
+}
+.step-bar .step {
+  flex: 1; text-align: center; padding: 3px; border-radius: 4px;
+  background: #0f172a; border: 1px solid #1e293b;
+  transition: all 0.3s;
+}
+.step-bar .step.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+.step-bar .step.done { background: #064e3b; border-color: #22c55e; color: #86efac; }
+
+/* ═══ BOOKING FORM ═══ */
+.booking-form { margin: 4px 0; }
+.booking-form .field {
+  display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px;
+}
+.booking-form .field label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.booking-form .field input {
+  padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3649;
+  background: #0f172a; color: #f1f5f9; font-size: 13px; outline: none;
+  font-family: inherit; transition: border 0.2s;
+}
+.booking-form .field input:focus { border-color: #3b82f6; }
+.booking-form .btn-submit {
+  width: 100%; padding: 9px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: opacity 0.2s;
+}
+.booking-form .btn-submit:hover { opacity: 0.9; }
+
+/* ═══ SUCCESS CONFIRMATION ═══ */
+.confirm-box {
+  background: #064e3b; border: 1px solid #22c55e; border-radius: 10px;
+  padding: 12px 14px; margin: 4px 0; text-align: center;
+  animation: fadeSlide 0.4s ease-out;
+}
+.confirm-box .big-check { font-size: 36px; margin-bottom: 6px; }
+.confirm-box .code-big { font-size: 20px; color: #fbbf24; font-weight: 700; letter-spacing: 2px; }
+.confirm-box .price-total { font-size: 24px; color: #86efac; font-weight: 700; margin: 4px 0; }
+
+/* ═══ INPUT ═══ */
+.input-area { padding: 10px 14px 14px; border-top: 1px solid #1e293b; }
+.input-row { display: flex; gap: 6px; }
+.input-row input {
+  flex: 1; padding: 10px 14px; border-radius: 10px; border: 1px solid #2a3649;
+  background: #0f172a; color: #f1f5f9; font-size: 13px; outline: none;
+  transition: border 0.2s; font-family: inherit;
+}
+.input-row input:focus { border-color: #3b82f6; }
+.input-row input::placeholder { color: #475569; }
+.input-row button {
+  width: 40px; height: 40px; border-radius: 10px; border: none;
+  background: linear-gradient(135deg, #3b82f6, #2563eb); color: #fff;
+  font-size: 16px; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center;
+}
+.input-row button:hover { opacity: 0.9; transform: scale(1.02); }
+.input-row button:active { transform: scale(0.96); }
+.quick-btns { display: flex; gap: 5px; margin-top: 8px; }
+.quick-btn {
+  flex: 1; padding: 5px; border-radius: 7px; border: 1px solid #2a3649;
+  background: transparent; color: #475569; font-size: 10px;
+  cursor: pointer; text-align: center; transition: all 0.2s;
+  word-break: keep-all;
+}
+.quick-btn:hover { background: #1e293b; color: #e2e8f0; border-color: #475569; }
+
+/* ═══ TOAST ═══ */
+.toast {
+  position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+  background: #22c55e; color: #052e16; padding: 7px 18px;
+  border-radius: 18px; font-size: 12px; font-weight: 500;
+  opacity: 0; transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none; z-index: 999;
+  transform: translateX(-50%) translateY(10px);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.footer { text-align: center; padding: 10px; font-size: 10px; color: #1e293b; border-top: 1px solid #0f172a; }
+
+/* ═══ RESPONSIVE ═══ */
+@media (max-width: 440px) {
+  body { padding: 8px; }
+  .container { border-radius: 20px; }
+  .chat-area { max-height: 440px; padding: 10px 10px 6px; }
+  .bubble { font-size: 12.5px; }
+}
+</style>
+</head>
+<body>
+
+<div class="toast" id="toast">✅ Đã copy!</div>
+
+<div class="container">
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo-wrap">✈️</div>
+    <div>
+      <h1>ABTrip AI Agent</h1>
+      <div class="subtitle">
+        <span class="status-dot"></span>
+        Trợ lý đặt vé thông minh
+        <span style="color:#334155">|</span>
+        <span style="color:#475569">Demo</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('flight')">✈️ Vé bay</button>
+    <button class="tab" onclick="switchTab('sim')">📱 eSIM</button>
+    <button class="tab" onclick="switchTab('visa')">🛂 Visa</button>
+  </div>
+
+  <!-- CHAT -->
+  <div class="chat-area" id="chatArea"></div>
+
+  <!-- INPUT -->
+  <div class="input-area">
+    <div class="input-row">
+      <input type="text" id="msgInput" placeholder="Tìm chuyến bay, eSIM, visa..."
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}">
+      <button onclick="sendMsg()" id="sendBtn">➤</button>
+    </div>
+    <div class="quick-btns" id="quickBtns"></div>
+  </div>
+
+  <div class="footer">ABTrip AI Agent · Ticketing Pro · LLM</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  CORE
+// ═══════════════════════════════════════════
+const chatArea = document.getElementById('chatArea');
+const msgInput = document.getElementById('msgInput');
+const quickBtns = document.getElementById('quickBtns');
+let session = { tab: 'flight', context: {} };
+
+function $(id) { return document.getElementById(id); }
+function getTime() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+}
+function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg || '✅ Đã copy!';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1600);
+}
+function copyToClip(text) {
+  navigator.clipboard.writeText(text).then(() => showToast('📋 Đã copy!'));
+}
+
+// ═══ MESSAGE HELPERS ═══
+function addUserMsg(text, time) {
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = `<div class="bubble">${escHtml(text)}<div class="time">${time||getTime()}</div></div>`;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+function addBotMsg(html, suggestions) {
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  let h = `<div class="avatar">✈️</div><div class="bubble">${html}<div class="time">${getTime()}</div>`;
+  if (suggestions && suggestions.length) {
+    h += `<div class="suggestions">${suggestions.map(s =>
+      `<span class="chip" onclick="quickSend('${escHtml(s)}')">${escHtml(s)}</span>`
+    ).join('')}</div>`;
+  }
+  h += '</div>';
+  div.innerHTML = h;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+function addTyping() {
+  const div = document.createElement('div');
+  div.className = 'msg bot'; div.id = 'typing';
+  div.innerHTML = `<div class="avatar">✈️</div><div class="bubble typing"><div class="loading"><span></span><span></span><span></span></div></div>`;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+function removeTyping() {
+  const t = document.getElementById('typing');
+  if (t) t.remove();
+}
+function quickSend(text) {
+  msgInput.value = text;
+  sendMsg();
+}
+
+function setQuickBtns(btns) {
+  if (!btns || !btns.length) { quickBtns.innerHTML = ''; return; }
+  quickBtns.innerHTML = btns.map(b => `<button class="quick-btn" onclick="quickSend('${escHtml(b)}')">${escHtml(b)}</button>`).join('');
+}
+
+// ═══ TABS ═══
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  session.tab = tab;
+  session.context = {};
+
+  const msgs = {
+    flight: '✈️ <strong>Vé máy bay</strong> — Cần tìm chuyến nào?<br><span style="color:#64748b">VD: <strong>"SG HN ngày mai"</strong>, <strong>"HAN Đà Nẵng 15/7"</strong>, <strong>"SG Đà Lạt 2 người"</strong></span>',
+    sim: '📱 <strong>eSIM du lịch</strong> — Mua eSIM nước nào?<br><span style="color:#64748b">Có sẵn: Thái Lan, Nhật, Hàn, Châu Á, Châu Âu, Mỹ</span>',
+    visa: '🛂 <strong>Visa & Nhập cảnh</strong> — Bạn cần visa nước nào?<br><span style="color:#64748b">Có hỗ trợ: Nhật, Hàn, Trung Quốc, Schengen, Mỹ, Anh, Úc</span>'
+  };
+  const sugs = {
+    flight: ['✈️ SG→HN mai', '✈️ HN→ĐN', '✈️ SG→ĐL 2 người'],
+    sim: ['📱 eSIM Thái', '📱 eSIM Nhật', '📱 eSIM Châu Âu'],
+    visa: ['🛂 Visa Nhật', '🛂 Visa Mỹ', '🛂 Visa Schengen']
+  };
+  addBotMsg(msgs[tab], sugs[tab]);
+  setQuickBtns(sugs[tab]);
+}
+
+// ═══════════════════════════════════════════
+//  FLIGHT DATA
+// ═══════════════════════════════════════════
+const ROUTES = {
+  'sgnhan': { from:'SGN', to:'HAN', fromName:'TP.HCM', toName:'Hà Nội' },
+  'hansgn': { from:'HAN', to:'SGN', fromName:'Hà Nội', toName:'TP.HCM' },
+  'sgndan': { from:'SGN', to:'DAD', fromName:'TP.HCM', toName:'Đà Nẵng' },
+  'dansgn': { from:'DAD', to:'SGN', fromName:'Đà Nẵng', toName:'TP.HCM' },
+  'handan': { from:'HAN', to:'DAD', fromName:'Hà Nội', toName:'Đà Nẵng' },
+  'danhan': { from:'DAD', to:'HAN', fromName:'Đà Nẵng', toName:'Hà Nội' },
+  'sgdli': { from:'SGN', to:'DLI', fromName:'TP.HCM', toName:'Đà Lạt' },
+  'dlisgn': { from:'DLI', to:'SGN', fromName:'Đà Lạt', toName:'TP.HCM' },
+  'hnhph': { from:'HAN', to:'HPH', fromName:'Hà Nội', toName:'Hải Phòng' },
+  'sgnpqu': { from:'SGN', to:'PQC', fromName:'TP.HCM', toName:'Phú Quốc' },
+  'pqusgn': { from:'PQC', to:'SGN', fromName:'Phú Quốc', toName:'TP.HCM' }
+};
+
+const AIRLINE_META = {
+  VJ:{name:'Vietjet',emoji:'🔴',color:'#ef4444'},
+  BL:{name:'Pacific',emoji:'🟠',color:'#f97316'},
+  QH:{name:'Bamboo',emoji:'🟢',color:'#22c55e'},
+  VN:{name:'VNA',emoji:'🔵',color:'#3b82f6'},
+  VU:{name:'Vietravel',emoji:'🟡',color:'#eab308'}
+};
+const AIRLINE_ORDER = ['VJ','BL','QH','VN','VU'];
+
+function randPrice(base, min, max, pax) {
+  return (base + Math.floor(Math.random()*(max-min))) * pax;
+}
+
+function fmtPrice(n) {
+  return n.toLocaleString('vi-VN') + '₫';
+}
+
+function genFlightsForRoute(routeKey, dateStr, pax, returnTrip) {
+  const route = ROUTES[routeKey];
+  if (!route) return null;
+
+  // Generate at least 7-10 flights across time slots
+  const morningFlights = [
+    { dep:'06:00', arr:'08:00', base:850, airline:'VN', badge:'⭐ Sớm nhất' },
+    { dep:'07:30', arr:'09:30', base:550, airline:'VJ' },
+    { dep:'08:45', arr:'10:45', base:680, airline:'QH' },
+    { dep:'10:00', arr:'12:00', base:490, airline:'BL' }
+  ];
+  const afternoonFlights = [
+    { dep:'12:30', arr:'14:30', base:580, airline:'VJ' },
+    { dep:'14:00', arr:'16:00', base:780, airline:'VN' },
+    { dep:'15:45', arr:'17:45', base:650, airline:'QH' },
+    { dep:'17:20', arr:'19:20', base:750, airline:'VU', badge:'🎯 Bay thẳng' }
+  ];
+  const eveningFlights = [
+    { dep:'18:00', arr:'20:00', base:560, airline:'VJ' },
+    { dep:'19:30', arr:'21:30', base:720, airline:'QH' },
+    { dep:'21:00', arr:'23:00', base:450, airline:'BL', badge:'⭐ Rẻ nhất' },
+    { dep:'22:15', arr:'00:15', base:530, airline:'VU' }
+  ];
+
+  function buildSlot(arr, slotName) {
+    return arr.map((f,i) => {
+      const price = randPrice(f.base, -80, 80, 1);
+      return {
+        code: f.airline + (100 + i*7),
+        airline: f.airline,
+        depart: f.dep,
+        arrive: f.arr,
+        price: fmtPrice(price),
+        price_raw: formatPriceRaw(fmtPrice(price)),
+        badge: f.badge || '',
+        baggage: (f.airline==='VN'||f.airline==='QH') ? '23kg' : '0kg*'
+      };
+    });
+  }
+
+  const morning = buildSlot(morningFlights, 'morning');
+  const afternoon = buildSlot(afternoonFlights, 'afternoon');
+  const evening = buildSlot(eveningFlights, 'evening');
+
+  const all = [...morning, ...afternoon, ...evening];
+  const cheapest = all.reduce((a,b) => parseInt(a.price_raw) < parseInt(b.price_raw) ? a : b);
+  const earliest = all.reduce((a,b) => a.depart < b.depart ? a : b);
+  // Mark the cheapest with badge
+  cheapest.badge = '⭐ Rẻ nhất';
+  const direct_flights = all.filter(f => f.airline === 'VN' || f.airline === 'QH');
+
+  const totalMin = parseInt(cheapest.price_raw) * pax;
+
+  return {
+    from: route.from,
+    to: route.to,
+    fromName: route.fromName,
+    toName: route.toName,
+    date: dateStr,
+    pax: pax > 1 ? `${pax} người lớn` : '1 người lớn',
+    paxNum: pax,
+    total_min: fmtPrice(totalMin),
+    returnTrip: !!returnTrip,
+    morning: morning.map(f => ({...f, price_raw:formatPriceRaw(f.price)})),
+    afternoon: afternoon.map(f => ({...f, price_raw:formatPriceRaw(f.price)})),
+    evening: evening.map(f => ({...f, price_raw:formatPriceRaw(f.price)})),
+    cheapest, earliest, direct: direct_flights[0] || cheapest, direct_flights
+  };
+}
+
+function formatPriceRaw(s) {
+  return parseInt(s.replace(/[₫.,]/g,''));
+}
+
+// ═══════════════════════════════════════════
+//  RENDER FLIGHT TABLE
+// ═══════════════════════════════════════════
+function buildFlightTable(outbound, returnFlight) {
+  let html = `<div class="flight-table-wrap">`;
+  const routeStr = `${escHtml(outbound.from)} → ${escHtml(outbound.to)}`;
+
+  // Header
+  html += `<div class="flight-header-route">
+    <span>✈️ <strong>${routeStr}</strong> | ${outbound.date} | 👥 ${outbound.pax}</span>
+    <button class="copy-btn" onclick="copyFlightTable()">📋 Copy</button>
+  </div>`;
+
+  window._lastFlightRaw = renderFlightRaw(outbound);
+  window._lastFlightHTML = html;
+
+  // Group by airline
+  const allFlights = [...outbound.morning, ...outbound.afternoon, ...outbound.evening];
+  const airlines = {};
+  const cheapestRaw = parseInt(outbound.cheapest.price_raw);
+  allFlights.forEach(f => {
+    if (!airlines[f.airline]) airlines[f.airline] = [];
+    airlines[f.airline].push(f);
+  });
+  AIRLINE_ORDER.forEach(al => {
+    if (airlines[al]) airlines[al].sort((a,b) => a.depart.localeCompare(b.depart));
+  });
+
+  // Render each airline block
+  AIRLINE_ORDER.forEach(al => {
+    const flights = airlines[al];
+    if (!flights || !flights.length) return;
+    const meta = AIRLINE_META[al] || { name:al, emoji:'', color:'#94a3b8' };
+    const minP = Math.min(...flights.map(f => parseInt(f.price_raw)));
+    html += `<div class="airline-block">`;
+    html += `<div class="airline-title">
+      <span>${meta.emoji} ${meta.name}</span>
+      <span class="price-hint">từ ${fmtPrice(minP)}</span>
+    </div>`;
+    html += `<table class="airline-table">
+      <thead><tr><th>Số hiệu</th><th>Giờ</th><th>Giá (VND)</th><th></th></tr></thead>
+      <tbody>`;
+    flights.forEach(f => {
+      const badgeHtml = f.badge ? `<span class="badge-cell">${escHtml(f.badge)}</span>` : '<span class="badge-cell"></span>';
+      html += `<tr onclick="selectFlight('${escHtml(f.code)}', '${escHtml(routeStr)}', ${outbound.paxNum})">
+        <td class="code-cell" style="color:${meta.color}">${escHtml(f.code)}</td>
+        <td>${escHtml(f.depart)}→${escHtml(f.arrive)}</td>
+        <td class="price-cell">${escHtml(f.price)}</td>
+        <td class="badge-cell">${badgeHtml}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  });
+
+  // Summary
+  html += `<div class="summary-box">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><span style="color:#94a3b8">👥 Hành khách:</span> ${outbound.pax}</div>
+      <div><span style="color:#94a3b8">Tổng thấp nhất:</span> <span style="color:#22c55e;font-weight:700;font-size:14px">${outbound.total_min}</span></div>
+    </div>
+  </div>`;
+
+  html += `<div style="font-size:10px;color:#475569;margin-top:5px;text-align:right;display:flex;justify-content:space-between">
+    <span>💡 Click chuyến để chọn</span>
+    <span>📋 Copy bảng gửi khách</span>
+  </div>`;
+
+  html += `</div>`;
+  window._lastFlightHTML = html;
+  return html;
+}
+
+function renderFlightRaw(outbound) {
+  let lines = [];
+  lines.push(`✈️ ${outbound.from} → ${outbound.to} | ${outbound.date} | 👥 ${outbound.pax}`);
+  lines.push(`──────────────────────────────────────────────────`);
+
+  const allFlights = [...outbound.morning, ...outbound.afternoon, ...outbound.evening];
+  const airlines = {};
+  allFlights.forEach(f => {
+    if (!airlines[f.airline]) airlines[f.airline] = [];
+    airlines[f.airline].push(f);
+  });
+
+  AIRLINE_ORDER.forEach(al => {
+    const flights = airlines[al];
+    if (!flights || !flights.length) return;
+    const meta = AIRLINE_META[al] || { name:al, emoji:'' };
+    lines.push(`[${meta.emoji} ${meta.name}]`);
+    flights.forEach(f => {
+      lines.push(`  ${f.code.padEnd(8)} ${f.depart}→${f.arrive.padEnd(5)} ${f.price.padEnd(14)}${f.badge ? ' ' + f.badge : ''}`);
+    });
+    lines.push(`──────────────────────────────────────────────────`);
+  });
+
+  lines.push(`Tổng thấp nhất: ${outbound.total_min} (${outbound.pax})`);
+  return lines.join('\n');
+}
+
+function copyFlightTable() {
+  if (window._lastFlightRaw) copyToClip(window._lastFlightRaw);
+}
+
+// ═══ SELECT FLIGHT → BOOKING ═══
+function selectFlight(code, route, pax) {
+  // Extract flight from data
+  const all = window._lastSearchData;
+  if (!all) return;
+  const allF = [...all.morning, ...all.afternoon, ...all.evening];
+  const f = allF.find(x => x.code === code);
+  if (!f) return;
+
+  session.context.selectedFlight = f;
+  session.context.outbound = all;
+
+  const meta = AIRLINE_META[f.airline] || { name: f.airline, emoji: '' };
+  const totalPrice = parseInt(f.price_raw) * pax;
+
+  const detailHtml = `<div class="single-flight-box">
+    <div style="display:flex;justify-content:space-between;align-items:start">
+      <div>
+        <span class="flight-code">${escHtml(f.code)}</span>
+        <span class="airline-name">${meta.emoji} ${meta.name}</span>
+      </div>
+      <span class="price-big">${escHtml(f.price)}</span>
+    </div>
+    <div class="time-row">${escHtml(f.depart)} → ${escHtml(f.arrive)}</div>
+    <div class="detail-row">
+      <span>✈️ Bay thẳng</span>
+      <span>🧳 ${f.baggage || 'Theo hạng vé'}</span>
+    </div>
+  </div>`;
+
+  // Step indicator
+  const steps = `<div class="step-bar">
+    <div class="step active">1 Chọn vé</div>
+    <div class="step">2 Thông tin</div>
+    <div class="step">3 Xác nhận</div>
+    <div class="step">4 Thanh toán</div>
+  </div>`;
+
+  addBotMsg(steps + detailHtml + `<div style="font-size:12px;color:#94a3b8;margin-top:4px">✈️ <strong>${route}</strong> · 👥 ${pax} người · 💰 ${fmtPrice(totalPrice)}</div>`, ['Điền thông tin đặt vé', 'Quay lại chọn vé khác']);
+  session.context.step = 'select';
+}
+
+// ═══ INTELLIGENT REPLY ═══
+function sendMsg() {
+  const text = msgInput.value.trim();
+  if (!text) return;
+  msgInput.value = '';
+  addUserMsg(text, getTime());
+  addTyping();
+
+  setTimeout(() => {
+    removeTyping();
+    const reply = generateReply(text);
+    if (reply.error) {
+      addBotMsg(reply.error);
+    } else {
+      addBotMsg(reply.text, reply.suggestions);
+      setQuickBtns(reply.suggestions);
+    }
+  }, 400 + Math.random() * 350);
+}
+
+function generateReply(msg) {
+  const l = msg.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const sess = session;
+
+  // ── CONTEXTUAL: BOOKING FORM ──
+  if ((l.includes('diền') || l.includes('điền') || l.includes('thông tin') || l.includes('dat ve') || l.includes('đặt vé') || l.includes('dien thong tin')) && sess.context.step === 'select' && sess.context.selectedFlight) {
+    const f = sess.context.selectedFlight;
+    const meta = AIRLINE_META[f.airline] || { name: f.airline, emoji: '' };
+    const totalPrice = parseInt(f.price_raw) * (sess.context.outbound?.paxNum || 1);
+    const dateStr = sess.context.outbound?.date || '05/07/2026';
+
+    sess.context.step = 'info';
+    const form = `<div class="booking-form">
+      <div class="step-bar">
+        <div class="step done">✓ Chọn vé</div>
+        <div class="step active">2 Thông tin</div>
+        <div class="step">3 Xác nhận</div>
+        <div class="step">4 Thanh toán</div>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">
+        ✈️ <strong>${f.code}</strong> ${meta.emoji} · ${f.depart}→${f.arrive} ${dateStr}
+      </div>
+      <div class="field">
+        <label>Họ và tên (như CMT/CCCD)</label>
+        <input type="text" id="bkName" placeholder="VD: NGUYEN VAN A" style="text-transform:uppercase">
+      </div>
+      <div class="field">
+        <label>Số điện thoại</label>
+        <input type="tel" id="bkPhone" placeholder="VD: 0901234567">
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="bkEmail" placeholder="VD: email@domain.com">
+      </div>
+      <button class="btn-submit" onclick="submitBooking()">📌 XÁC NHẬN ĐẶT VÉ — ${escHtml(fmtPrice(totalPrice))}</button>
+      <div style="font-size:10px;color:#475569;margin-top:4px;text-align:center">
+        ⏳ Giữ vé 15 phút • Miễn phí hủy trước 24h
+      </div>
+    </div>`;
+    return { text: form, suggestions: ['Đặt 1 người', 'Đặt 2 người', 'Hủy', 'Quay lại'] };
+  }
+
+  // ── BOOKING SUBMISSION ──
+  if (l.includes('xac nhan') || l.includes('xác nhận') || l.includes('submit') || l.includes('xac nhan dat') || l.includes('xác nhận đặt')) {
+    return handleBookingSubmit();
+  }
+
+  if (sess.context.step === 'info' && (l.includes('1 người') || l.includes('2 người'))) {
+    // Quick change pax count
+    if (sess.context.outbound) {
+      const newPax = l.includes('2 người') ? 2 : 1;
+      sess.context.outbound.paxNum = newPax;
+      sess.context.outbound.pax = newPax > 1 ? `${newPax} người lớn` : '1 người lớn';
+      if (sess.context.selectedFlight) {
+        const f = sess.context.selectedFlight;
+        const totalPrice = parseInt(f.price_raw) * newPax;
+        // Just regenerate info step
+        sess.context.step = 'select';
+        const meta = AIRLINE_META[f.airline] || { name: f.airline, emoji: '' };
+        return {
+          text: `✅ Đã thay đổi 👥 <strong>${newPax} người</strong>. Tổng: <strong>${fmtPrice(totalPrice)}</strong><br><br>👉 Gõ <strong>"điền thông tin"</strong> để tiếp tục.`,
+          suggestions: ['Điền thông tin đặt vé', 'Quay lại chọn vé']
+        };
+      }
+    }
+  }
+
+  // ── FLIGHT SEARCH ──
+  const routeMatch = parseRoute(l, msg);
+  if (routeMatch) {
+    const { routeKey, dateStr, pax, returnTrip } = routeMatch;
+    const data = genFlightsForRoute(routeKey, dateStr, pax, returnTrip);
+    if (data) {
+      window._lastSearchData = data;
+      sess.context.routeKey = routeKey;
+      sess.context.outbound = data;
+      sess.context.step = null;
+
+      let text = buildFlightTable(data);
+      const sugs = ['Chuyến rẻ nhất', 'Chuyến sớm nhất', 'Bay thẳng', 'Đổi ngày bay'];
+      if (returnTrip) {
+        // Add return flight info
+        const returnData = genFlightsForRoute(routeKey.replace(/(..)(..)/,'$2$1'), dateStr, pax, false);
+        if (returnData) {
+          window._lastReturnData = returnData;
+          text += `<div style="font-size:12px;color:#fbbf24;margin-top:8px">🔄 <strong>Chiều về:</strong> ${returnData.from} → ${returnData.to} — ${returnData.date} | 👥 ${returnData.pax}</div>`;
+          sugs.unshift('Xem chiều về', 'Tổng khứ hồi');
+        }
+      }
+      return { text, suggestions: sugs };
+    }
+  }
+
+  // ── RETURN TRIP ──
+  if ((l.includes('chiều về') || l.includes('chieu ve') || l.includes('xem về') || l.includes('xem chiều')) && window._lastReturnData) {
+    const rd = window._lastReturnData;
+    return { text: buildFlightTable(rd), suggestions: ['Chuyến rẻ nhất về', 'Chọn cả hai', 'Đổi ngày', 'Tìm tuyến khác'] };
+  }
+
+  if ((l.includes('tổng') || l.includes('tong') || l.includes('khứ hồi') || l.includes('khu hoi') || l.includes('cả đi') || l.includes('ca di')) && window._lastSearchData && window._lastReturnData) {
+    const ob = window._lastSearchData;
+    const rt = window._lastReturnData;
+    const obCheap = parseInt(ob.cheapest.price_raw) * ob.paxNum;
+    const rtCheap = parseInt(rt.cheapest.price_raw) * rt.paxNum;
+    return {
+      text: `🔄 <strong>KHỨ HỒI — TỔNG QUAN</strong>
+<div class="info-card">
+  <div class="item"><span class="key">✈️ Chiều đi</span> <span class="val">${ob.from}→${ob.to} ${ob.date}</span></div>
+  <div class="item"><span class="key">💰 Thấp nhất</span> <span class="val" style="color:#22c55e;font-weight:600">${ob.total_min}</span></div>
+</div>
+<div class="info-card">
+  <div class="item"><span class="key">✈️ Chiều về</span> <span class="val">${rt.from}→${rt.to} ${rt.date}</span></div>
+  <div class="item"><span class="key">💰 Thấp nhất</span> <span class="val" style="color:#22c55e;font-weight:600">${rt.total_min}</span></div>
+</div>
+<div style="font-size:14px;color:#fbbf24;font-weight:700;text-align:center;margin:6px 0">
+  💰 TỔNG KHỨ HỒI: ${fmtPrice(obCheap + rtCheap)}
+</div>`,
+      suggestions: ['Chọn chiều đi', 'Chọn chiều về', 'Đặt cả hai', 'Tìm tuyến khác']
+    };
+  }
+
+  // ── FOLLOW-UP: CHEAPEST ──
+  if ((l.includes('rẻ nhất') || l.includes('re nhat') || l.includes('giá rẻ') || l.includes('gia re') || l.includes('thấp nhất') || l.includes('thap nhat')) && window._lastSearchData) {
+    const f = window._lastSearchData.cheapest;
+    session.context.selectedFlight = f;
+    session.context.outbound = window._lastSearchData;
+    return { text: buildSingleFlight(f), suggestions: ['Đặt vé này', 'Chuyến sớm nhất', 'Bay thẳng', 'Tìm tuyến khác'] };
+  }
+
+  // ── FOLLOW-UP: EARLIEST ──
+  if ((l.includes('sớm nhất') || l.includes('som nhat') || l.includes('đầu tiên') || l.includes('dau tien') || l.includes('sớm')) && window._lastSearchData) {
+    const f = window._lastSearchData.earliest;
+    session.context.selectedFlight = f;
+    session.context.outbound = window._lastSearchData;
+    return { text: buildSingleFlight(f), suggestions: ['Đặt vé này', 'Chuyến rẻ nhất', 'Bay thẳng', 'Tìm tuyến khác'] };
+  }
+
+  // ── FOLLOW-UP: DIRECT ──
+  if ((l.includes('bay thẳng') || l.includes('thẳng') || l.includes('thang') || l.includes('direct')) && window._lastSearchData) {
+    const f = window._lastSearchData.direct || window._lastSearchData.cheapest;
+    session.context.selectedFlight = f;
+    session.context.outbound = window._lastSearchData;
+    return { text: buildSingleFlight(f), suggestions: ['Đặt vé này', 'Chuyến rẻ nhất', 'Chuyến sớm nhất', 'Tìm tuyến khác'] };
+  }
+
+  // ── BOOKING ──
+  if (l.includes('đặt') || l.includes('book') || l.includes('mua vé') || l.includes('dat') || l.includes('mua ve')) {
+    if (session.context.selectedFlight) {
+      // Go directly to booking form
+      const f = session.context.selectedFlight;
+      const meta = AIRLINE_META[f.airline] || { name: f.airline, emoji: '' };
+      return { text: `✈️ <strong>ĐẶT VÉ</strong> — ${meta.emoji} ${f.code} | ${f.depart}→${f.arrive}<br><br>👉 Gõ <strong>"điền thông tin"</strong> để nhập thông tin hành khách.`, suggestions: ['Điền thông tin đặt vé', 'Chuyến rẻ nhất', 'Quay lại'] };
+    }
+  }
+
+  // ── PAYMENT ──
+  if (l.includes('thanh toán') || l.includes('thanh toan') || l.includes('chuyen khoan') || l.includes('ck') || l.includes('chuyển khoản') || l.includes('chuyen tien')) {
+    return { text: `💰 <strong>THANH TOÁN</strong>
+<div class="info-card">
+  <div class="item"><span class="key">🏦 Ngân hàng</span> <span class="val" style="font-weight:600">MB Bank</span></div>
+  <div class="item"><span class="key">🔢 STK</span> <span class="val" style="font-weight:600">699990505</span></div>
+  <div class="item"><span class="key">👤 CTK</span> <span class="val">CTY CP ABTRIP</span></div>
+  <div class="item"><span class="key">📍 Chi nhánh</span> <span class="val">Hai Bà Trưng</span></div>
+</div>
+<div style="font-size:12px;color:#94a3b8;margin:6px 0">
+💳 Nội dung CK: <strong style="color:#fbbf24">ABT837426 + SĐT</strong><br>
+⏳ Hạn xuất vé: 15 phút sau đặt<br>
+📞 Hotline: <strong style="color:#f1f5f9">0788 320 320</strong>
+</div>
+<div style="font-size:11px;color:#475569">✅ Sau khi chuyển khoản, gõ <strong>"đã chuyển"</strong> để xác nhận</div>`,
+      suggestions: ['Đã chuyển khoản', 'Hủy đặt chỗ', 'Đổi phương thức'] };
+  }
+
+  // ── CONFIRM PAYMENT ──
+  if (l.includes('cảm ơn') || l.includes('cam on') || l.includes('thanks') || l.includes('ok') || l.includes('da chuyen') || l.includes('đã chuyển') || l.includes('da thanh toan') || l.includes('đã thanh toán')) {
+    return { text: `<div class="confirm-box">
+      <div class="big-check">✅</div>
+      <div style="color:#86efac;font-size:13px;margin-bottom:4px">ĐẶT VÉ THÀNH CÔNG</div>
+      <div class="code-big">ABT837426</div>
+      <div class="price-total">2.180.000₫</div>
+      <div style="font-size:12px;color:#6ee7b7;margin-top:4px">
+        ✈️ BL197 · 21:00→23:00 · 05/07/2026
+      </div>
+      <div style="margin-top:8px">
+        <span style="display:inline-block;background:#065f46;padding:3px 12px;border-radius:12px;font-size:11px;color:#6ee7b7">🎫 Vé đã xuất</span>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#94a3b8;margin-top:6px">
+      📧 Vé đã gửi email<br>
+      📞 Hotline 24/7: <strong style="color:#f1f5f9">0788 320 320</strong>
+    </div>`,
+      suggestions: ['Kiểm tra trạng thái', 'Đặt thêm vé', 'Đổi ngày bay', 'Mua thêm hành lý'] };
+  }
+
+  // ── CANCEL ──
+  if (l.includes('hủy') || l.includes('huy') || l.includes('cancel') || l.includes('quay lại') || l.includes('quay lai')) {
+    session.context.step = null;
+    return { text: '❌ Đã hủy thao tác. Bạn cần tìm chuyến bay nào?', suggestions: ['✈️ SG→HN mai', '✈️ HN→ĐN', '✈️ SG→ĐL'] };
+  }
+
+  // ── LUGGAGE ──
+  if (l.includes('hành lý') || l.includes('hanh ly') || l.includes('vna') || l.includes('vali') || l.includes('kí gửi') || l.includes('ky gui') || l.includes('hành l')) {
+    return { text: `🧳 <strong>HÀNH LÝ NỘI ĐỊA</strong>
+<table style="width:100%;border-collapse:collapse;font-size:11px;margin:3px 0">
+<tr style="border-bottom:1px solid #1e293b"><th style="text-align:left;padding:4px;color:#64748b;font-weight:500">Hãng</th><th style="text-align:center;padding:4px;color:#64748b;font-weight:500">Xách tay</th><th style="text-align:center;padding:4px;color:#64748b;font-weight:500">Ký gửi</th><th style="text-align:center;padding:4px;color:#64748b;font-weight:500">Loại</th></tr>
+<tr style="border-bottom:1px solid #0f172a"><td style="padding:4px">🔵 VNA</td><td style="text-align:center">10kg</td><td style="text-align:center"><span style="color:#22c55e">23kg</span></td><td style="text-align:center">Full-service</td></tr>
+<tr style="border-bottom:1px solid #0f172a"><td style="padding:4px">🟡 Vietjet</td><td style="text-align:center">7kg</td><td style="text-align:center">0kg*</td><td style="text-align:center">LCC</td></tr>
+<tr style="border-bottom:1px solid #0f172a"><td style="padding:4px">🟢 Bamboo</td><td style="text-align:center">10kg</td><td style="text-align:center"><span style="color:#22c55e">23kg</span></td><td style="text-align:center">Full-service</td></tr>
+<tr style="border-bottom:1px solid #0f172a"><td style="padding:4px">🟠 Pacific</td><td style="text-align:center">7kg</td><td style="text-align:center">0kg*</td><td style="text-align:center">LCC</td></tr>
+<tr><td style="padding:4px">🟡 Vietravel</td><td style="text-align:center">7kg</td><td style="text-align:center"><span style="color:#22c55e">23kg</span></td><td style="text-align:center">Full-service</td></tr>
+</table>
+<div style="font-size:10px;color:#64748b;margin-top:4px">* LCC: thêm 5kg=150k • 10kg=280k • 20kg=500k</div>
+<div style="font-size:10px;color:#64748b">Gõ <strong>"thêm Nkg [hãng]"</strong> để mua</div>`,
+      suggestions: ['Thêm 10kg Vietjet', 'Thêm 20kg Pacific', 'Hành lý VNA', 'Hành lý Bamboo'] };
+  }
+
+  // ── VISA ──
+  if (l.includes('visa') || l.includes('hộ chiếu') || l.includes('ho chieu') || l.includes('passport') || l.includes('thi th') || l.includes('nhp cnh')) {
+    return { text: `🛂 <strong>VISA & NHẬP CẢNH</strong>
+<div class="info-card">
+  <div class="item"><span class="key">🇯🇵 Nhật Bản</span> <span class="val" style="color:#f1f5f9;font-weight:500">5-7 ngày · 1.200.000₫</span></div>
+  <div class="item"><span class="key">🇰🇷 Hàn Quốc</span> <span class="val" style="color:#f1f5f9;font-weight:500">7-10 ngày · 1.500.000₫</span></div>
+  <div class="item"><span class="key">🇨🇳 Trung Quốc</span> <span class="val" style="color:#f1f5f9;font-weight:500">5-7 ngày · 1.000.000₫</span></div>
+  <div class="item"><span class="key">🇪🇺 Schengen</span> <span class="val" style="color:#f1f5f9;font-weight:500">10-15 ngày · 3.500.000₫</span></div>
+  <div class="item"><span class="key">🇺🇸 Mỹ</span> <span class="val" style="color:#f1f5f9;font-weight:500">2-4 tuần · 5.000.000₫</span></div>
+  <div class="item"><span class="key">🇬🇧 Anh</span> <span class="val" style="color:#f1f5f9;font-weight:500">10-15 ngày · 4.000.000₫</span></div>
+  <div class="item"><span class="key">🇦🇺 Úc</span> <span class="val" style="color:#f1f5f9;font-weight:500">7-14 ngày · 2.500.000₫</span></div>
+</div>
+<div style="font-size:11px;color:#64748b;margin-top:3px">📞 Gõ <strong>"hỗ trợ [nước]"</strong> để tư vấn chi tiết</div>`,
+      suggestions: ['Visa Nhật Bản', 'Visa Hàn Quốc', 'Visa Schengen', 'Visa Mỹ'] };
+  }
+
+  // ── SIM ──
+  if (l.includes('sim') || l.includes('esim') || l.includes('data') || l.includes('4g') || l.includes('5g')) {
+    return { text: `📱 <strong>eSIM DU LỊCH</strong>
+<div class="info-card">
+  <div class="item"><span class="key">🇹🇭 Thái Lan</span> <span class="val">7 ngày/15GB</span> <span class="price-tag">99.000₫</span></div>
+  <div class="item"><span class="key">🇯🇵 Nhật Bản</span> <span class="val">7 ngày/10GB</span> <span class="price-tag">150.000₫</span></div>
+  <div class="item"><span class="key">🇰🇷 Hàn Quốc</span> <span class="val">7 ngày/15GB</span> <span class="price-tag">129.000₫</span></div>
+  <div class="item"><span class="key">🌏 Châu Á (đa quốc gia)</span> <span class="val">15 ngày/20GB</span> <span class="price-tag">199.000₫</span></div>
+  <div class="item"><span class="key">🌍 Châu Âu</span> <span class="val">30 ngày/30GB</span> <span class="price-tag">299.000₫</span></div>
+  <div class="item"><span class="key">🇺🇸 Mỹ</span> <span class="val">15 ngày/20GB</span> <span class="price-tag">250.000₫</span></div>
+</div>
+<div style="font-size:11px;color:#64748b;margin-top:3px">📲 Gõ <strong>"mua eSIM [nước]"</strong> — nhận mã sau 5'</div>`,
+      suggestions: ['eSIM Thái Lan', 'eSIM Nhật Bản', 'eSIM Hàn Quốc', 'eSIM Châu Âu'] };
+  }
+
+  // ── BUY SIM ──
+  if (l.includes('mua') && (l.includes('sim') || l.includes('esim'))) {
+    const countryMatch = msg.match(/(Thái|Thai|Nhật|Nhat|Hàn|Han|Châu Âu|chau au|Châu Á|chau a|Mỹ|My|Âu|Á|Â)/i);
+    const country = countryMatch ? countryMatch[1] : '';
+    const plans = {
+      'Thái': {name:'Thái Lan', price:'99.000₫', data:'15GB', days:'7'},
+      'Nhật': {name:'Nhật Bản', price:'150.000₫', data:'10GB', days:'7'},
+      'Hàn': {name:'Hàn Quốc', price:'129.000₫', data:'15GB', days:'7'},
+      'Mỹ': {name:'Mỹ', price:'250.000₫', data:'20GB', days:'15'}
+    };
+    const plan = plans[country] || {name:'Quốc tế', price:'199.000₫', data:'20GB', days:'15'};
+
+    return { text: `<div class="confirm-box" style="border-color:#3b82f6;background:#0f172a">
+      <div style="font-size:28px;margin-bottom:4px">📱</div>
+      <div style="color:#fbbf24;font-weight:700;font-size:16px">eSIM ${plan.name}</div>
+      <div style="color:#e2e8f0;margin:4px 0">${plan.days} ngày / ${plan.data}</div>
+      <div class="price-total" style="font-size:22px">${plan.price}</div>
+      <div style="color:#64748b;font-size:11px;margin-top:6px">📲 Nhận mã eSIM qua email sau 5 phút</div>
+      <button class="btn-submit" onclick="buyESIM('${plan.name}','${plan.price}')" style="margin-top:8px;max-width:200px">📲 MUA NGAY</button>
+    </div>`,
+      suggestions: ['Xác nhận mua', 'eSIM khác', 'Hướng dẫn kích hoạt'] };
+  }
+
+  // ── VISA SUPPORT ──
+  if (l.includes('hỗ trợ') || l.includes('ho tro') || l.includes('tư vấn') || l.includes('tu van')) {
+    const country = msg.replace(/hỗ trợ|ho tro|tư vấn|tu van|visa/gi, '').trim();
+    if (country) {
+      const tips = {
+        'mỹ': 'Visa Mỹ cần phỏng vấn, đặt lịch trước 1-2 tháng. Phí DS-160 + phỏng vấn.',
+        'nhật': 'Visa Nhật nộp qua đại lý ủy quyền, không cần phỏng vấn. Thời gian 5-7 ngày.',
+        'hàn': 'Visa Hàn Quốc có thể xin visa 5 năm. Cần xác nhận công việc + sao kê tài khoản.',
+        'schengen': 'Visa Schengen cần bảo hiểm du lịch 30.000€ + lịch trình chi tiết. Nộp sớm 3 tháng.'
+      };
+      const tip = tips[country.toLowerCase()] || 'TVPL quy định thay đổi liên tục. Tra Timatic để biết chính xác.';
+      return { text: `🛂 <strong>Hỗ trợ Visa ${escHtml(country)}</strong><br><br>
+📌 <strong>Cần cung cấp:</strong><br>
+1️⃣ Họ tên (như passport)<br>
+2️⃣ Số hộ chiếu & ngày hết hạn<br>
+3️⃣ Lịch trình dự kiến<br><br>
+💡 ${tip}`,
+        suggestions: ['Tra Timatic', 'DS cần chuẩn bị', 'Phí dịch vụ', 'Đặt lịch hẹn'] };
+    }
+  }
+
+  // ── STATUS CHECK ──
+  if (l.includes('kiểm tra') || l.includes('kiem tra') || l.includes('trạng thái') || l.includes('trang thai') || l.includes('check')) {
+    return { text: `<div class="info-card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><span style="color:#94a3b8">📋 Mã đặt chỗ</span> <span style="color:#fbbf24;font-weight:700">ABT837426</span></div>
+        <span style="background:#065f46;color:#6ee7b7;padding:2px 8px;border-radius:8px;font-size:10px">Đã xuất vé</span>
+      </div>
+      <div style="border-top:1px solid #1e293b;margin-top:6px;padding-top:6px">
+        <div><span style="color:#64748b">✈️ Chuyến:</span> <span style="color:#f1f5f9">BL197</span> <span style="color:#475569">|</span> 21:00→23:00</div>
+        <div><span style="color:#64748b">📅 Ngày:</span> <span style="color:#f1f5f9">05/07/2026</span></div>
+        <div><span style="color:#64748b">💰 Tổng:</span> <span style="color:#22c55e;font-weight:600">2.180.000₫</span></div>
+      </div>
+    </div>`,
+      suggestions: ['Xuất vé/hủy', 'Mua thêm hành lý', 'Chọn chỗ ngồi', 'Hotline 0788 320 320'] };
+  }
+
+  // ── DEFAULT / HELP ──
+  return { text: `🤖 <strong>ABTrip AI Agent</strong><br><br>
+📌 <strong>Thử gõ:</strong>
+<div class="info-card">
+  <div class="item"><span class="key">✈️ Tìm vé</span> <span class="val" style="color:#f1f5f9">"SG HN ngày mai"</span></div>
+  <div class="item"><span class="key">✈️ Khứ hồi</span> <span class="val" style="color:#f1f5f9">"SGN HAN khứ hồi"</span></div>
+  <div class="item"><span class="key">✈️ Đa tuyến</span> <span class="val" style="color:#f1f5f9">"SG Đà Lạt 15/7"</span></div>
+  <div class="item"><span class="key">🧳 Hành lý</span> <span class="val" style="color:#f1f5f9">"hành lý VNA"</span></div>
+  <div class="item"><span class="key">📱 eSIM</span> <span class="val" style="color:#f1f5f9">"eSIM Thái Lan"</span></div>
+  <div class="item"><span class="key">🛂 Visa</span> <span class="val" style="color:#f1f5f9">"visa Nhật Bản"</span></div>
+  <div class="item"><span class="key">❓ Hỗ trợ</span> <span class="val" style="color:#f1f5f9">"hỗ trợ visa Mỹ"</span></div>
+</div>`,
+    suggestions: ['✈️ SG→HN mai', '✈️ SG HN khứ hồi', '🧳 Hành lý VNA', '📱 eSIM Thái'] };
+}
+
+// ═══ HELPERS ═══
+function buildSingleFlight(f) {
+  const meta = AIRLINE_META[f.airline] || { name: f.airline, emoji: '', color: '#94a3b8' };
+  const totalPrice = parseInt(f.price_raw);
+  return `<div class="single-flight-box" onclick="copyToClip('${escHtml(f.code)} ${f.depart}→${f.arrive} ${f.price}')" title="Click để copy">
+    <div style="display:flex;justify-content:space-between;align-items:start">
+      <div>
+        <span class="flight-code">${escHtml(f.code)}</span>
+        <span class="airline-name">${meta.emoji} ${meta.name}</span>
+      </div>
+      <span class="price-big">${escHtml(f.price)}</span>
+    </div>
+    <div class="time-row">${escHtml(f.depart)} → ${escHtml(f.arrive)}</div>
+    <div class="detail-row">
+      <span>✈️ Bay thẳng</span>
+      <span>🧳 ${f.baggage || 'Theo hạng vé'}</span>
+    </div>
+    <div class="action-hint">
+      👉 Gõ <strong>"đặt vé"</strong> để đặt • Click để copy
+    </div>
+  </div>`;
+}
+
+function parseRoute(l, orig) {
+  // Detect route patterns
+  const cities = {
+    'sg': 'sgn', 'sgn': 'sgn', 'hcm': 'sgn', 'tphcm': 'sgn',
+    'hn': 'han', 'hanoi': 'han', 'hà nội': 'han',
+    'dn': 'dad', 'dad': 'dad', 'đn': 'dad', 'đà nẵng': 'dad',
+    'dl': 'dli', 'dli': 'dli', 'đl': 'dli', 'đà lạt': 'dli',
+    'hp': 'hph', 'hph': 'hph', 'hải phòng': 'hph',
+    'pq': 'pqc', 'pqc': 'pqc', 'phú quốc': 'pqc'
+  };
+
+  // Find two city codes in the text
+  let fromCode = null, toCode = null;
+  let fromIdx = 999, toIdx = -1;
+
+  for (const [alias, code] of Object.entries(cities)) {
+    const idx = l.indexOf(alias);
+    if (idx === -1) continue;
+    if (idx < fromIdx) {
+      // Shift previous candidate
+      if (fromCode !== null) { toCode = fromCode; toIdx = fromIdx; }
+      fromCode = code; fromIdx = idx;
+    } else if (idx > toIdx) {
+      toCode = code; toIdx = idx;
+    }
+  }
+
+  if (!fromCode || !toCode || fromCode === toCode) {
+    // Check for specific pattern: "SG HN" or "SGN HAN"
+    const tokens = l.split(/[\s,]+/).filter(t => t.length >= 2);
+    const found = tokens.map(t => cities[t] || null).filter(Boolean);
+    if (found.length >= 2) {
+      fromCode = found[0];
+      toCode = found[found.length - 1];
+    }
+    if (!fromCode || !toCode || fromCode === toCode) return null;
+  }
+
+  const routeKey = fromCode + toCode;
+  if (!ROUTES[routeKey]) {
+    const revKey = toCode + fromCode;
+    if (ROUTES[revKey]) { const t=fromCode; fromCode=toCode; toCode=t; routeKey=fromCode+toCode; }
+    else return null;
+  }
+
+  // Detect date
+  let dateStr = getDefaultDate();
+  const dateMatch = orig.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+  if (dateMatch) {
+    const d = dateMatch[1], m = dateMatch[2], y = dateMatch[3] || new Date().getFullYear();
+    dateStr = `${d.padStart(2,'0')}/${m.padStart(2,'0')}/${y}`;
+  } else if (l.includes('ngày mai') || l.includes('mai')) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    dateStr = `${String(tomorrow.getDate()).padStart(2,'0')}/${String(tomorrow.getMonth()+1).padStart(2,'0')}/${tomorrow.getFullYear()}`;
+  } else if (l.includes('ngày mốt') || l.includes('mot')) {
+    const day2 = new Date();
+    day2.setDate(day2.getDate() + 2);
+    dateStr = `${String(day2.getDate()).padStart(2,'0')}/${String(day2.getMonth()+1).padStart(2,'0')}/${day2.getFullYear()}`;
+  }
+
+  // Detect pax
+  let pax = 1;
+  const paxMatch = orig.match(/(\d+)\s*(người|khach|khách|pax|nguoi)/i);
+  if (paxMatch) pax = parseInt(paxMatch[1]);
+  // Also check for "2 người" pattern
+  const paxMatch2 = orig.match(/(\d+)\s*ng/i);
+  if (paxMatch2) pax = Math.max(pax, parseInt(paxMatch2[1]));
+
+  // Detect return trip
+  const returnTrip = l.includes('khứ hồi') || l.includes('khu hoi') || l.includes('kh') || l.includes('về') || l.includes('ve');
+
+  return { routeKey, dateStr, pax, returnTrip };
+}
+
+function getDefaultDate() {
+  const d = new Date();
+  if (d.getHours() >= 22) d.setDate(d.getDate() + 1);
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+}
+
+// ═══ BOOKING SUBMIT ═══
+function submitBooking() {
+  const name = document.getElementById('bkName')?.value?.trim();
+  const phone = document.getElementById('bkPhone')?.value?.trim();
+  const email = document.getElementById('bkEmail')?.value?.trim();
+
+  if (!name || !phone) {
+    showToast('⚠️ Vui lòng nhập họ tên và số điện thoại');
+    return;
+  }
+
+  const f = session.context.selectedFlight;
+  const ob = session.context.outbound;
+  const paxNum = ob?.paxNum || 1;
+  const totalPrice = f ? parseInt(f.price_raw) * paxNum : 2180000;
+  const dateStr = ob?.date || '05/07/2026';
+  const routeStr = ob ? `${ob.from}→${ob.to}` : 'SGN→HAN';
+
+  // Show confirmation with payment
+  const bookingCode = 'ABT' + Math.floor(100000 + Math.random()*900000);
+  session.context.bookingCode = bookingCode;
+
+  return addBotMsg(`<div class="confirm-box">
+    <div class="big-check">✅</div>
+    <div style="color:#86efac;font-size:13px;margin-bottom:4px">XÁC NHẬN ĐẶT VÉ</div>
+    <div class="code-big">${bookingCode}</div>
+    <div class="price-total">${fmtPrice(totalPrice)}</div>
+    <div style="font-size:12px;color:#6ee7b7;margin-top:4px;line-height:1.6">
+      ✈️ ${f ? escHtml(f.code) : 'BL197'} · ${routeStr}<br>
+      🕐 ${f ? escHtml(f.depart)+'→'+escHtml(f.arrive) : '21:00→23:00'} · ${dateStr}<br>
+      👤 ${escHtml(name)} · 📞 ${escHtml(phone)}
+    </div>
+  </div>
+  <div style="font-size:12px;color:#94a3b8;margin:6px 0">
+    ⏳ Giữ chỗ <strong>15 phút</strong> — chưa thanh toán<br>
+    💳 Gõ <strong>"thanh toán"</strong> để xem thông tin chuyển khoản
+  </div>`, ['Thanh toán ngay', 'Hủy đặt chỗ', 'Mua thêm hành lý', 'Đặt thêm vé']);
+}
+
+function buyESIM(name, price) {
+  showToast(`📱 Đã đặt eSIM ${name} - ${price} ✓`);
+  addBotMsg(`📱 <strong>ĐẶT eSIM ${escHtml(name)}</strong><br><br>
+✅ <strong>Đã nhận đơn!</strong><br>
+📲 Mã eSIM sẽ gửi qua email trong 5 phút.<br>
+🔗 HDSD: Vào Cài đặt > Di động > Thêm eSIM > Quét mã QR<br><br>
+📞 Hotline: 0788 320 320`, ['Mua thêm eSIM', 'Hướng dẫn kích hoạt', '✈️ Tìm vé bay']);
+}
+
+// ═══ INIT ═══
+switchTab('flight');
+</script>
+</body>
+</html>

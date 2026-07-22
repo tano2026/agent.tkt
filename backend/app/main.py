@@ -80,9 +80,11 @@ settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "*",  # Allow all origins in production
         settings.frontend_origin,
         "http://localhost:4321",
         "http://127.0.0.1:4321",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -131,7 +133,7 @@ def main() -> None:
         "app.main:app",
         host=settings.backend_host,
         port=settings.backend_port,
-        reload=True,
+        reload=False,
         log_level=settings.log_level.lower(),
     )
 

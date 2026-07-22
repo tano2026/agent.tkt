@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>SmartAgent — Phòng Vé AI</title>
+<!-- Font -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+<!-- Phosphor Icons (light style) -->
+<script src="https://unpkg.com/@phosphor-icons/web@2.1.1/src/index.mjs" type="module"></script>
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/light/style.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  background:#f8f7f4;
+  color:#1a1a1a;
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+}
+.container{
+  width:100%;
+  max-width:720px;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  position:relative;
+}
+
+/* ── Header ── */
+.header{
+  position:sticky;
+  top:0;
+  z-index:50;
+  background:#f8f7f4;
+  padding:16px 20px 0;
+}
+.header-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:16px;
+}
+.logo{font-size:20px;font-weight:700;color:#1a1a1a;letter-spacing:-.3px}
+.logo-sub{font-weight:400;color:#9ca3af;font-size:14px;margin-left:4px}
+.header-actions{display:flex;gap:8px;align-items:center}
+.header-actions a{
+  text-decoration:none;
+  font-size:14px;font-weight:500;
+  padding:8px 16px;
+  border-radius:999px;
+  transition:all .15s;
+}
+.btn-about{
+  background:#f0efed;
+  color:#4b5563;
+}
+.btn-about:hover{background:#e5e4e2}
+.btn-book{
+  background:#1a1a1a;
+  color:white;
+}
+.btn-book:hover{background:#333}
+
+/* ── Quick Action Cards ── */
+.quick-cards{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:8px;
+  padding:0 20px 16px;
+}
+.qcard{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  background:white;
+  border:1px solid #f0efed;
+  border-radius:16px;
+  padding:12px 4px 10px;
+  cursor:pointer;
+  transition:all .15s;
+  position:relative;
+}
+.qcard:hover{
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  border-color:#e0dedb;
+}
+.qcard:active{transform:scale(.96)}
+.qcard-icon{
+  width:40px;height:40px;
+  border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;
+}
+.qcard-label{
+  font-size:11px;font-weight:500;color:#4b5563;
+  text-align:center;line-height:1.2;
+}
+.qcard-badge{
+  position:absolute;top:-4px;right:-4px;
+  background:#fbbf24;color:#1a1a1a;
+  font-size:9px;font-weight:700;
+  padding:2px 6px;border-radius:999px;
+  line-height:1.2;
+}
+.qcard-icon.blue{background:#e8f4fd;color:#2563eb}
+.qcard-icon.yellow{background:#fef3c7;color:#d97706}
+.qcard-icon.green{background:#d1fae5;color:#059669}
+.qcard-icon.purple{background:#ede9fe;color:#7c3aed}
+.qcard-icon.pink{background:#fce7f3;color:#db2777}
+
+/* ── Chat ── */
+.chat-area{
+  flex:1;
+  overflow-y:auto;
+  padding:0 20px 120px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.chat-area::-webkit-scrollbar{width:4px}
+.chat-area::-webkit-scrollbar-thumb{background:#ddd;border-radius:4px}
+
+/* Message */
+.msg-row{
+  display:flex;
+  align-items:flex-end;
+  gap:8px;
+  animation:fadeIn .2s ease-out;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+.msg-row.user{justify-content:flex-end}
+.msg-row.bot{justify-content:flex-start}
+
+.avatar{
+  width:32px;height:32px;
+  border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:700;
+  flex-shrink:0;
+}
+.avatar.user{background:#1a1a1a;color:white;order:2}
+.avatar.bot{background:#d9a74a;color:white}
+
+.bubble{
+  max-width:82%;
+  padding:12px 16px;
+  border-radius:18px;
+  font-size:14px;
+  line-height:1.6;
+  word-wrap:break-word;
+  white-space:pre-wrap;
+}
+.bubble.user{
+  background:#1a1a1a;
+  color:white;
+  border-radius:18px 18px 4px 18px;
+}
+.bubble.bot{
+  background:white;
+  color:#1a1a1a;
+  border:1px solid #f0efed;
+  border-radius:18px 18px 18px 4px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.bubble.bot pre{white-space:pre;overflow-x:auto;font-size:12px;background:#f8f7f4;padding:8px 10px;border-radius:8px;margin:4px 0}
+
+/* ── Flight Cards ── */
+.flight-cards{display:flex;flex-direction:column;gap:6px;margin:4px 0}
+.flight-card{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:10px 14px;
+  background:#fafaf9;
+  border:1px solid #f0efed;
+  border-radius:10px;
+  transition:all .15s;
+  cursor:pointer;
+}
+.flight-card:hover{border-color:#d9a74a;background:#fdfcf9}
+.flight-card.cheapest{border-color:#d9a74a;background:#fffcf2}
+.flight-card.cheapest .fc-left{border-left:3px solid #d9a74a;padding-left:8px}
+.fc-left{display:flex;flex-direction:column;gap:2px}
+.fc-code{font-size:14px;font-weight:600;color:#1a1a1a}
+.fc-time{font-size:12px;color:#6b7280}
+.fc-dur{font-size:11px;color:#9ca3af}
+.fc-right{text-align:right;display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+.fc-price{font-size:15px;font-weight:700;color:#1a1a1a}
+.fc-price.cheapest{color:#b8860b}
+.fc-badge{
+  font-size:10px;font-weight:600;color:#b8860b;
+  background:rgba(184,134,11,.1);
+  padding:2px 6px;border-radius:4px;
+  white-space:nowrap;
+}
+.fc-footer{
+  text-align:center;
+  font-size:12px;color:#6b7280;
+  padding:6px 0 2px;
+}
+.bubble ul{
+  list-style:disc;
+  padding-left:20px;
+  margin:6px 0;
+  space-y:4px;
+}
+.bubble li{margin-bottom:4px}
+.bubble .note{
+  color:#9ca3af;
+  font-style:italic;
+  font-size:13px;
+  margin-top:10px;
+}
+.bubble .strong{font-weight:600}
+.bubble .emoji{font-size:16px;margin-right:4px}
+
+/* ── Input Bar ── */
+.input-bar{
+  position:fixed;
+  bottom:0;left:50%;
+  transform:translateX(-50%);
+  width:100%;
+  max-width:720px;
+  padding:12px 20px;
+  background:linear-gradient(to top,#f8f7f4 60%,transparent);
+}
+.input-inner{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background:white;
+  border:1px solid #e5e4e2;
+  border-radius:999px;
+  padding:4px 4px 4px 18px;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  transition:border-color .15s;
+}
+.input-inner:focus-within{border-color:#1a1a1a}
+.input-inner input{
+  flex:1;
+  border:none;
+  outline:none;
+  font-size:14px;
+  font-family:'Inter',system-ui,sans-serif;
+  background:transparent;
+  color:#1a1a1a;
+  padding:10px 0;
+}
+.input-inner input::placeholder{color:#9ca3af}
+.send-btn{
+  width:42px;height:42px;
+  background:#1a1a1a;
+  border:none;
+  border-radius:50%;
+  color:white;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  transition:all .15s;
+  font-size:18px;
+}
+.send-btn:hover{background:#333}
+.send-btn:active{transform:scale(.92)}
+
+/* ── Loading ── */
+.loading-dots{display:inline-flex;gap:4px;padding:4px 0}
+.loading-dots span{
+  width:7px;height:7px;
+  background:#9ca3af;
+  border-radius:50%;
+  animation:bounce 1.2s infinite;
+}
+.loading-dots span:nth-child(2){animation-delay:.2s}
+.loading-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+/* Responsive */
+@media(max-width:480px){
+  .qcard{padding:8px 2px 8px}
+  .qcard-icon{width:34px;height:34px;font-size:16px}
+  .qcard-label{font-size:10px}
+  .bubble{max-width:88%;font-size:13px}
+  .header{padding:12px 14px 0}
+  .quick-cards{padding:0 14px 12px}
+  .chat-area{padding:0 14px 100px}
+  .input-bar{padding:10px 14px}
+}
+</style>
+</head>
+<body>
+
+<div class="container" id="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-top">
+      <div class="logo">SmartAgent <span class="logo-sub">— Phòng Vé AI</span></div>
+      <div class="header-actions">
+        <a href="#" class="btn-about">Giới thiệu</a>
+        <a href="#" class="btn-book">Đặt ngay</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Quick Cards -->
+  <div class="quick-cards">
+    <div class="qcard" onclick="sendQuick('vé máy bay')">
+      <div class="qcard-icon blue">✈️</div>
+      <div class="qcard-label">Vé máy bay</div>
+    </div>
+    <div class="qcard" onclick="sendQuick('fast track Nội Bài')">
+      <div class="qcard-icon yellow">⚡</div>
+      <span class="qcard-badge">24/7</span>
+      <div class="qcard-label">Fast Track</div>
+    </div>
+    <div class="qcard" onclick="sendQuick('eSIM')">
+      <div class="qcard-icon green">📶</div>
+      <div class="qcard-label">eSIM</div>
+    </div>
+    <div class="qcard" onclick="sendQuick('visa')">
+      <div class="qcard-icon purple">🛂</div>
+      <div class="qcard-label">Visa</div>
+    </div>
+    <div class="qcard" onclick="sendQuick('hộ chiếu')">
+      <div class="qcard-icon pink">📄</div>
+      <div class="qcard-label">Hộ chiếu</div>
+    </div>
+  </div>
+
+  <!-- Chat Area -->
+  <div class="chat-area" id="chat"></div>
+
+  <!-- Input Bar -->
+  <div class="input-bar">
+    <div class="input-inner">
+      <input id="input" placeholder="Nhập câu hỏi..." onkeydown="if(event.key==='Enter')sendMsg()">
+      <button class="send-btn" onclick="sendMsg()">➤</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://100.64.173.75/api/chat';
+let sessionId = 's' + Date.now() + Math.random().toString(36).slice(2, 8);
+let pending = false;
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+
+function scrollBottom(){
+  requestAnimationFrame(()=>{chat.scrollTop = chat.scrollHeight});
+}
+
+function addMsg(text, role){
+  const row = document.createElement('div');
+  row.className = 'msg-row ' + role;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + role;
+  avatar.textContent = role === 'user' ? 'T' : 'S';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+  bubble.textContent = text;
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  scrollBottom();
+  return bubble;
+}
+
+function addBotBubble(html){
+  const row = document.createElement('div');
+  row.className = 'msg-row bot';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar bot';
+  avatar.textContent = 'S';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble bot';
+  bubble.innerHTML = html;
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  scrollBottom();
+}
+
+/* ── Flight Card Renderer ── */
+function renderFlightCards(flights){
+  const codeToAirline = {'BL':'Bamboo','VJ':'VietJet','QH':'Bamboo','VU':'Vietravel','VN':'Vietnam Airlines'};
+  const cheapest = Math.min(...flights.map(f => f.price));
+  let html = '<div class="flight-cards">';
+  flights.forEach(f => {
+    const isCheapest = f.price === cheapest;
+    const color = f.airline === 'BL' ? '#52b960' : f.airline === 'VJ' ? '#e74c3c' : f.airline === 'QH' ? '#2ecc71' : f.airline === 'VU' ? '#e67e22' : '#3498db';
+    html += '<div class="flight-card' + (isCheapest ? ' cheapest' : '') + '">';
+    html += '<div class="fc-left" style="--accent:' + color + '">';
+    html += '<span class="fc-code">' + f.code + '</span>';
+    html += '<span class="fc-time">' + f.depart + ' → ' + f.arrive + '</span>';
+    if(f.duration_h) html += '<span class="fc-dur">' + f.duration_h + 'h</span>';
+    html += '</div>';
+    html += '<div class="fc-right">';
+    html += '<span class="fc-price' + (isCheapest ? ' cheapest' : '') + '">' + f.price_str + '</span>';
+    if(isCheapest) html += '<span class="fc-badge">Rẻ nhất</span>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '<div class="fc-footer">💰 Rẻ nhất <strong>' + flights.find(f => f.cheapest).price_str + '</strong></div>';
+  return html;
+}
+
+function showTyping(){
+  const row = document.createElement('div');
+  row.className = 'msg-row bot';
+  row.id = 'typing';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar bot';
+  avatar.textContent = 'S';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble bot';
+  bubble.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  scrollBottom();
+}
+
+function hideTyping(){
+  const el = document.getElementById('typing');
+  if(el) el.remove();
+}
+
+// Format bot reply: simple markdown-like to HTML
+function formatReply(text){
+  // Bold **text**
+  text = text.replace(/\*\*(.+?)\*\*/g, '<span class="strong">$1</span>');
+  // Bullet points at line start
+  text = text.replace(/^• (.+)$/gm, '<li>$1</li>');
+  text = text.replace(/(<li>.*?<\/li>(\n|$))+/g, '<ul>$&</ul>');
+  // Italic *text*
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Line breaks
+  text = text.replace(/\n/g, '<br>');
+  // Fix nested: ul needs proper wrapping
+  text = text.replace(/<ul><br>/g, '<ul>');
+  text = text.replace(/<br><\/ul>/g, '</ul>');
+  return text;
+}
+
+async function sendMsg(){
+  const msg = input.value.trim();
+  if(!msg || pending) return;
+  input.value = '';
+  addMsg(msg, 'user');
+  pending = true;
+  showTyping();
+  try{
+    const r = await fetch(API, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg, session_id:sessionId})
+    });
+    const d = await r.json();
+    hideTyping();
+    if(d.reply){
+      if(d.type === 'flight_results' && d.data && d.data.flights){
+        addBotBubble(renderFlightCards(d.data.flights));
+      } else {
+        addBotBubble(formatReply(d.reply));
+      }
+    }
+    if(d.type === 'confirm'){
+      setTimeout(() => sendMsg('OK'), 500);
+    }
+  }catch(e){
+    hideTyping();
+    addBotBubble('❌ Lỗi kết nối: ' + e.message);
+  }
+  pending = false;
+}
+
+function sendQuick(topic){
+  input.value = topic;
+  sendMsg();
+}
+</script>
+</body>
+</html>

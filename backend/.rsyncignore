@@ -1,0 +1,6 @@
+requirements.txt
+__pycache__/
+*.pyc
+.venv/
+deploy/
+.env
