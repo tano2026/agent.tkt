@@ -1,16 +1,12 @@
 """
-LLM Gateway — SmartAgent brain with dual-tier routing.
+Premium LLM Gateway — function calling + structured output + streaming.
 
-Provider chain (ordered):
-  1. HHTech API (primary, dual-tier Sonnet/Opus)
-  2. OmniRoute (fallback)
-  3. Gemini (backup)
-  4. Smart Mock (last resort)
+Architecture:
+1. Primary: OpenAI-compatible (9Router/OmniRoute) with tool/function calling
+2. Fallback: Google Gemini with function calling API
+3. Last resort: text-based JSON extraction (backward compat)
 
-Dual-tier system:
-- OPUS tier: for complex/code/technical queries (claude-opus-4.8 via HHTech)
-- SONNET tier: for regular chat (claude-sonnet-4 via HHTech)
-- OmniRoute fallback: uses configured deepseek-chat model
+Each provider uses proper function calling so the LLM never hallucinates JSON.
 """
 
 from __future__ import annotations
@@ -19,524 +15,743 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from datetime import datetime
+from typing import Any, AsyncGenerator
 
 import httpx
 
+from app.models.chat import (
+    AVAILABLE_TOOLS,
+    LLMResponse,
+    TOOL_BOOK_FLIGHT,
+    TOOL_SEARCH_FLIGHT,
+)
+
 logger = logging.getLogger(__name__)
 
+# ─── SYSTEM PROMPT ────────────────────────────────────────────────────────────
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """Bạn là chuyên gia tư vấn vé máy bay cho ABTrip — hệ thống đặt vé của người Việt.
 
-_JSON_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
+## KIẾN THỨC SÂN BAY & HÃNG BAY
+{airport_info}
 
+{airline_info}
 
-def _parse_json(raw: str) -> dict[str, Any] | None:
-    """Extract JSON from LLM text reply (handles ```json … ``` too)."""
-    text = raw.strip()
-    if not text:
-        return None
-    # Try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Try extracting from code blocks
-    for block in _JSON_RE.findall(text):
-        try:
-            return json.loads(block.strip())
-        except json.JSONDecodeError:
-            continue
-    # Try finding first {…} block
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-    return None
+## LUẬT XỬ LÝ
 
+1. **HIỂU TIẾNG VIỆT TỰ NHIÊN:**
+   - Hôm nay là: {today}
+   - "SG" = SGN (Sài Gòn), "HN" = HAN (Hà Nội), "DN" = DAD (Đà Nẵng)
+   - "ngày mai" = ngày hôm sau, "ngày kia" = 2 ngày sau
+   - "cuối tuần" = Thứ 7 hoặc Chủ nhật gần nhất
+   - "tuần sau" = tuần tiếp theo
+   - "sáng" = 6:00-11:59, "trưa" = 12:00-13:59, "chiều" = 14:00-17:59, "tối" = 18:00-23:59
+   - "2 vé", "2 người", "2 khách" = 2 người lớn
+   - "có em bé" = thêm 1 em bé (dưới 2 tuổi)
 
-# ── Function Calling Tools ──────────────────────────────────────────────────
+2. **LUỒNG XỬ LÝ:**
+   - KHI CẦN TÌM VÉ → DÙNG TOOL `search_flight`
+   - KHI KHÁCH CHỌN VÉ VÀ CUNG CẤP THÔNG TIN → DÙNG TOOL `book_flight`
+   - KHI TRẢ LỜI CHÍNH SÁCH / GIẢI ĐÁP → TRẢ LỜI TEXT TRỰC TIẾP
 
-_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_flight",
-            "description": "Tìm chuyến bay nội địa Việt Nam. Gọi khi người dùng muốn tìm vé máy bay.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "origin": {"type": "string", "description": "Mã sân bay đi (SGN=TP.HCM, HAN=Hà Nội, DAD=Đà Nẵng, ...)"},
-                    "destination": {"type": "string", "description": "Mã sân bay đến"},
-                    "date": {"type": "string", "description": "Ngày bay định dạng DDMMYYYY (vd: 25072026)"},
-                    "adults": {"type": "integer", "description": "Số người lớn", "default": 1},
-                    "children": {"type": "integer", "description": "Số trẻ em (2-11 tuổi)", "default": 0},
-                    "infants": {"type": "integer", "description": "Số em bé (dưới 2 tuổi)", "default": 0},
-                },
-                "required": ["origin", "destination", "date"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "answer_question",
-            "description": "Trả lời câu hỏi chung của người dùng (chính sách, hành lý, thủ tục, giá, ...). KHÔNG dùng để tìm vé.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "reply": {"type": "string", "description": "Câu trả lời bằng tiếng Việt, thân thiện và hữu ích"},
-                },
-                "required": ["reply"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "collect_passenger_info",
-            "description": "Thu thập thông tin chi tiết hành khách để đặt vé. Gọi khi người dùng đã chọn chuyến bay và bot cần thông tin hành khách (tên, ngày sinh, giới tính, số điện thoại, email).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "full_name": {"type": "string", "description": "Họ tên đầy đủ của hành khách"},
-                    "date_of_birth": {"type": "string", "description": "Ngày sinh định dạng DDMMYYYY (vd: 01051984)"},
-                    "gender": {"type": "string", "description": "Giới tính: Nam, Nữ"},
-                    "phone_number": {"type": "string", "description": "Số điện thoại liên hệ"},
-                    "email": {"type": "string", "description": "Email liên hệ"},
-                    "pax_type": {"type": "string", "enum": ["adult", "child", "infant"], "description": "Loại hành khách: adult, child, infant"},
-                    "pax_index": {"type": "integer", "description": "Chỉ số của hành khách trong danh sách (bắt đầu từ 0)"},
-                },
-                "required": [],
-            },
-        },
-    },
-]
+3. **ĐỊNH DẠNG NGÀY:** luôn dùng DDMMYYYY (không dấu gạch).
 
-# ── System prompt ────────────────────────────────────────────────────────────
+4. **ĐỊNH DẠNG TRẢ LỜI (khi show kết quả):**
+   ```
+   ✈️ HAN → SGN | 01/07/2026
+   
+   VN230  07:30→09:45  1.250.000₫/khách  ⭐ Rẻ nhất
+   VJ151  08:15→10:20  1.390.000₫/khách
+   VN232  14:00→16:10  1.450.000₫/khách  🚀 Nhanh nhất
+   VJ153  19:30→21:35  1.190.000₫/khách  💥 Bay đêm
+   
+   Tổng 2 người: 2.380.000₫ - 2.900.000₫
+   
+   Bạn muốn đặt chuyến nào? 👇
+   ```
+   - Luôn highlight option tốt nhất: Rẻ nhất, Nhanh nhất, Khuyến mãi
+   - Giá luôn ghi đơn vị: /khách hoặc /người
+   - Thời gian bay tính luôn (VD: 2h15)
+   - Nếu có nhiều chuyến → gợi ý chọn lọc
 
-_SYSTEM_PROMPT = """Bạn là trợ lý đặt vé máy bay ABTrip. Giúp khách hàng tìm vé và trả lời thông tin.
+5. **KHI NGƯỜI DÙNG HỎI CHÍNH SÁCH:**
+   Tra cứu và trả lời trực tiếp, ví dụ:
+   - "Bay VietJet có được mang bao nhiêu kg?" → Trả lời policy của VJ
+   - "Đổi vé Vietnam Airlines mất bao nhiêu?" → Trả lời change_fee của VN
+   - "Hủy vé Bamboo có mất tiền không?" → Trả lời cancel policy
 
-QUAN TRỌNG: Bạn có 3 CÔNG CỤ để sử dụng:
-1. **search_flight** — khi khách muốn tìm vé máy bay. Cần origin, destination, date.
-2. **answer_question** — khi khách hỏi thông tin chung (hành lý, đổi vé, thủ tục, giá...).  
-3. **collect_passenger_info** — khi khách đã chọn chuyến bay và bot cần thu thập thông tin hành khách (tên, ngày sinh, giới tính, số điện thoại, email).
+6. **KHI KHÔNG HIỂU:** Hỏi lại lịch sự, gợi ý các lựa chọn.
 
-Nếu có [THÔNG TIN TRA CỨU] — đó là kiến thức từ cơ sở dữ liệu, hãy dùng nó để trả lời.
+7. **GIỌNG NÓI:** Thân thiện, chuyên nghiệp, tự nhiên như nhân viên phòng vé.
+   - Xưng "tôi" gọi khách "bạn/anh/chị"
+   - Nói ngắn gọn, đi thẳng vào vấn đề
+   - Khi cần xác nhận: hỏi nhanh 1 câu, không dài dòng
+"""
 
-Khi cần thông tin hành khách, hãy gợi ý khách nhập theo cú pháp: `NGUYEN VAN A / Nam / 15-10-1995 / 0987654321 / a@gmail.com` hoặc gửi ảnh Hộ chiếu/CCCD để trích xuất tự động.
-
-Mã sân bay: SGN (TP.HCM), HAN (Hà Nội), DAD (Đà Nẵng), CXR (Nha Trang), HUI (Huế), PQC (Phú Quốc), VII (Vinh), DIN (Điện Biên), VCS (Côn Đảo), TBB (Tuy Hòa), UIH (Quy Nhơn), VKG (Rạch Giá), HPH (Hải Phòng), BMV (Buôn Ma Thuột).
-
-LUÔN DÙNG CÔNG CỤ — không trả lời text thuần nếu có công cụ phù hợp."""
-
-
-# ── Gateway class ─────────────────────────────────────────────────────────────
 
 class LLMGateway:
-    """SmartAgent's brain — LLM with provider failover."""
+    """Premium LLM Gateway with function calling support."""
 
-    def __init__(self) -> None:
-        from app.services.config import get_settings
+    def __init__(self):
+        self._gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        self._openai_base_url = os.getenv("OPENAI_BASE_URL", "")
+        self._openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self._preferred_provider = self._detect_provider()
+        self._http_client = httpx.AsyncClient(timeout=60.0)
 
-        _cfg = get_settings()
-
-        # ── HHTech API (primary, dual-tier Sonnet/Opus) ───────────
-        self._use_hhtech = bool(_cfg.hhtech_api_key)
-        self._hhtech_key = _cfg.hhtech_api_key
-        self._hhtech_base = _cfg.hhtech_base_url.rstrip("/")
-        # Dual models: Sonnet (fast/cheap) and Opus (quality)
-        self._sonnet_model = _cfg.hhtech_sonnet_model
-        self._opus_model = _cfg.hhtech_opus_model
-
-        # ── OmniRoute (fallback) ──────────────────────────────────
-        self._use_omniroute = bool(_cfg.omniroute_api_key)
-        self._omni_key = _cfg.omniroute_api_key
-        self._omni_base = _cfg.omniroute_base_url.rstrip("/")
-        self._omni_model = _cfg.omniroute_model
-
-        # ── Gemini (backup) ───────────────────────────────────────
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        self._gemini_client = None
-        self._gemini_models = ["gemini-2.5-flash"]
-        if gemini_key:
-            try:
-                import google.genai as genai
-
-                self._gemini_client = genai.Client(api_key=gemini_key)
-                logger.info("Gemini client initialized")
-            except Exception as e:
-                logger.warning("Gemini init failed: %s", e)
-
-        # ── HTTP client ───────────────────────────────────────────
-        self._http = httpx.AsyncClient(timeout=30)
-
-    # ── Public API ─────────────────────────────────────────────────────────
+    def _detect_provider(self) -> str:
+        """Auto-detect best provider: Gemini > OpenAI-compatible."""
+        if self._gemini_api_key:
+            return "gemini"
+        if self._openai_base_url:
+            return "openai"
+        return "gemini"  # Default: try Gemini (no key = free tier?)
 
     async def chat(
         self,
         message: str,
         history: list[dict[str, str]] | None = None,
-        agent: str = "ticketing",
-        context: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Send a chat message to the LLM with automatic tier routing + failover.
-
-        Provider chain: HHTech → OmniRoute → Gemini → Smart Mock.
+        system_override: str | None = None,
+    ) -> LLMResponse:
         """
-        messages = self._build_messages(message, history, agent, context)
+        Send a chat message with function calling support and RAG context.
 
-        # Determine which tier to use
-        use_opus = self._should_use_opus(message)
-        tier_name = "OPUS" if use_opus else "SONNET"
-        logger.info("Routing to %s tier for message: %s...", tier_name, message[:50])
+        Automatically enriches the system prompt with RAG-retrieved knowledge
+        unless system_override is explicitly provided.
 
-        # 1) Try HHTech (dual-tier)
-        if self._use_hhtech:
-            try:
-                result = await self._call_hhtech_tiered(messages, use_opus)
-                if result:
-                    logger.info("HHTech %s success: type=%s", tier_name, result.get("type"))
-                    return result
-            except Exception as e:
-                logger.error("HHTech %s error: %s", tier_name, e)
-                # Fall through to OmniRoute
-
-        # 2) Try OmniRoute
-        if self._use_omniroute:
-            logger.info("Trying OmniRoute: model=%s", self._omni_model)
-            try:
-                result = await self._call_omniroute(messages)
-                if result:
-                    logger.info("OmniRoute success: type=%s", result.get("type"))
-                    return result
-            except Exception as e:
-                logger.error("OmniRoute error: %s", e)
-                # Fall through to Gemini
-
-        # 3) Try Gemini
-        if self._gemini_client:
-            for model_name in self._gemini_models:
-                result = await self._call_gemini(model_name, messages)
-                if result:
-                    logger.info("Gemini %s success: type=%s", model_name, result.get("type"))
-                    return result
-
-        # 4) Last resort: Smart Mock (rule-based)
-        logger.info("All providers failed, using Smart Mock")
-        return self._smart_mock(message)
-
-    # ── Tier Router ────────────────────────────────────────────────────────
-
-    def _should_use_opus(self, message: str) -> bool:
-        """Determine if this message needs Opus tier vs Sonnet.
-
-        Opus is used for code, technical writing, complex analysis, and very long messages.
-        Sonnet handles everything else (faster, cheaper).
-
-        Returns True if Opus should be used, False for Sonnet (regular chat).
+        Returns structured LLMResponse with:
+        - type="text": just reply
+        - type="tool_call": execute the named tool with args
+        - type="error": something went wrong
         """
-        msg_lower = message.lower().strip()
-
-        # Clear indicators for Opus tier (code, technical writing, complex analysis)
-        opus_indicators = [
-            # Code-related patterns
-            "```",  # Code blocks
-            "def ", "function ", "class ", "import ", "from ",  # Function/class definitions
-            "const ", "let ", "var ", "=>",  # Variable declarations
-            "{", "}", "[", "]", ";",  # Code syntax
-            "if ", "else ", "for ", "while ", "try ", "except ",  # Control flow
-            "return ", "yield ", "async ", "await ",  # Special keywords
-            "# ", "// ", "/*", "*/",  # Comments
-
-            # Technical writing indicators
-            "api", "endpoint", "database", "sql", "query", "algorithm",
-            "framework", "library", "package", "module", "dependency",
-            "debug", "test", "unit test", "integration", "deploy",
-            "version", "release", "patch", "bug", "fix", "issue",
-
-            # Complex analysis/requests
-            "phân tích", "tối ưu", "so sánh", "đánh giá", "kết luận",
-            "giải thích", "hướng dẫn", "bài viết",
-            "nghiên cứu", "tổng hợp", "tóm tắt", "biểu đồ", "bảng",
-
-            # Vietnamese technical terms
-            "mã nguồn", "lập trình", "phát triển", "kiểm tra lỗi",
-            "cải thiện", "nâng cấp", "phiên bản", "tài liệu kỹ thuật",
-        ]
-
-        # Check for string-based Opus indicators
-        for indicator in opus_indicators:
-            if isinstance(indicator, str) and indicator in msg_lower:
-                return True
-
-        # Check for question patterns that might benefit from Opus
-        # These often benefit from deeper reasoning even if not extremely long
-        question_patterns = ["làm sao", "như thế nào", "tại sao", "vì sao"]
-        if any(pattern in msg_lower for pattern in question_patterns):
-            # Lower threshold for question patterns since they often indicate complex queries
-            if len(message) > 20:  # Reduced from 50 to catch shorter but meaningful questions
-                return True
-
-        # Length-based heuristic (very long messages often need complex processing)
-        if len(message) > 300:
-            return True
-
-        # Default to Sonnet for regular chat
-        return False
-
-    # ── HHTech (Dual-tier) ─────────────────────────────────────────────────
-
-    async def _call_hhtech_tiered(
-        self,
-        messages: list[dict[str, str]],
-        use_opus: bool,
-    ) -> dict[str, Any] | None:
-        """Call HHTech API with dual-tier model selection + function calling tools."""
-        model = self._opus_model if use_opus else self._sonnet_model
-
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 2048,
-            "temperature": 0.3,
-            "tools": _TOOLS,
-            "tool_choice": "auto",
-        }
-
         try:
-            resp = await self._http.post(
-                f"{self._hhtech_base}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._hhtech_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code != 200:
-                logger.warning("HHTech %s HTTP %s: %s", model, resp.status_code, resp.text[:200])
-                return None
+            # ── RAG enrichment ────────────────────────────────────────
+            if system_override is None:
+                rag_context = self._query_rag(message)
+                if rag_context:
+                    base_prompt = self._build_system_prompt()
+                    system_override = f"{base_prompt}\n\n---\n{rag_context}"
+            # ──────────────────────────────────────────────────────────
 
-            data = resp.json()
-            return self._parse_response_message(data)
-        except httpx.TimeoutException:
-            logger.warning("HHTech %s timed out", model)
-            return None
-
-    # ── OmniRoute ──────────────────────────────────────────────────────────
-
-    async def _call_omniroute(
-        self,
-        messages: list[dict[str, str]],
-    ) -> dict[str, Any] | None:
-        """Call OmniRoute (OpenRouter-compatible) API with function calling."""
-        # Convert system message to user message for models that don't support system
-        clean = []
-        sys_text = ""
-        for m in messages:
-            if m["role"] == "system":
-                sys_text += m["content"] + "\n"
-            else:
-                clean.append(m)
-        if sys_text and clean:
-            clean[0]["content"] = sys_text + "\n---\n" + clean[0]["content"]
-
-        payload: dict[str, Any] = {
-            "model": self._omni_model,
-            "messages": clean,
-            "max_tokens": 1024,
-            "temperature": 0.3,
-            "tools": _TOOLS,
-            "tool_choice": "auto",
-        }
-
-        try:
-            resp = await self._http.post(
-                f"{self._omni_base}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._omni_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code != 200:
-                logger.warning("OmniRoute HTTP %s: %s", resp.status_code, resp.text[:200])
-                return None
-
-            data = resp.json()
-            return self._parse_response_message(data)
-        except httpx.TimeoutException:
-            logger.warning("OmniRoute timed out")
-            return None
-
-    # ── Gemini ───────────────────────────────────────────────────────────────
-
-    async def _call_gemini(self, model_name: str, messages: list[dict[str, str]]) -> dict[str, Any] | None:
-        """Call Gemini API. Returns None if the model is unavailable."""
-        if not self._gemini_client:
-            return None
-        try:
-            # Extract system prompt
-            sys_msg = ""
-            msgs = []
-            for m in messages:
-                if m["role"] == "system":
-                    sys_msg += m["content"] + "\n"
-                else:
-                    msgs.append({"role": m["role"], "content": m["content"]})
-
-            # Merge system into first user message (Gemini doesn't have native system prompt in all models)
-            if sys_msg and msgs and msgs[0]["role"] == "user":
-                msgs[0]["content"] = sys_msg + "\n---\n" + msgs[0]["content"]
-
-            # Convert messages to Gemini format
-            gemini_history = []
-            for i, msg in enumerate(msgs):
-                role = "user" if msg["role"] in ("user", "system") else "model"
-                gemini_history.append({
-                    "role": role,
-                    "parts": [{"text": msg["content"]}],
-                })
-
-            resp = await self._gemini_client.aio.models.generate_content(
-                model=model_name,
-                contents=gemini_history[-1:],  # latest message
-                config={
-                    "max_output_tokens": 1024,
-                    "temperature": 0.3,
-                } if hasattr(self._gemini_client.aio.models, 'generate_content') else {},
-            )
-            text = resp.text if hasattr(resp, "text") else ""
-            return _parse_json(text)
+            if self._preferred_provider == "openai":
+                return await self._chat_openai(message, history, system_override)
+            return await self._chat_gemini(message, history, system_override)
         except Exception as e:
-            logger.debug("Gemini %s call failed: %s", model_name, e)
-            return None
-
-    # ── Smart Mock ───────────────────────────────────────────────────────────
-
-    def _smart_mock(self, message: str) -> dict[str, Any]:
-        """Rule-based fallback using intent parser."""
-        from app.services.intent_parser import parse_flight_search
-
-        params = parse_flight_search(message)
-        if params and params.get("origin") and params.get("destination"):
-            return {"type": "search_flight", "params": params}
-        return {"type": "reply", "reply": "Xin lỗi, hiện tại hệ thống đang bảo trì. Vui lòng thử lại sau."}
-
-    # ── Response Parser ─────────────────────────────────────────────────────────
-
-    def _parse_response_message(self, data: dict[str, Any]) -> dict[str, Any] | None:
-        """Parse API response — prefer tool_calls, fall back to JSON content.
-
-        Function calling (tool_calls):
-            Returns {"type": "tool_call", "name": "...", "arguments": {...}}
-
-        JSON fallback (traditional):
-            Returns parsed JSON from content text (backward compat).
-        """
-        message = data.get("choices", [{}])[0].get("message", {})
-        if not message:
-            return None
-
-        # ── FUNCTION CALLING PATH ──────────────────────────────────
-        tool_calls = message.get("tool_calls", [])
-        if tool_calls:
-            tc = tool_calls[0]
-            func = tc.get("function", {})
-            name = func.get("name", "")
+            logger.error("LLM primary failed: %s", e)
+            # Try fallback
             try:
-                arguments = json.loads(func.get("arguments", "{}"))
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("Failed to parse tool arguments: %s", func.get("arguments", "")[:100])
-                return None
+                if self._preferred_provider == "openai":
+                    return await self._chat_gemini(message, history, system_override)
+                return await self._chat_openai(message, history, system_override)
+            except Exception as e2:
+                logger.error("LLM fallback also failed: %s", e2)
+                return LLMResponse(
+                    type="error",
+                    content="Xin lỗi, hiện tại hệ thống AI đang gặp sự cố. Vui lòng thử lại sau ít phút.",
+                )
 
-            logger.info("Tool call: %s(%s)", name, {k: str(v)[:40] for k, v in arguments.items()})
+    # ── OpenAI-Compatible Provider (9Router / OmniRoute) ────────────────
 
-            # Map function calls to our internal format
-            if name == "search_flight":
-                return {"type": "search", "params": arguments}
-            elif name == "answer_question":
-                return {"type": "reply", "content": arguments.get("reply", "")}
-            elif name == "collect_passenger_info":
-                return {"type": "collect_pax", "params": arguments}
-            else:
-                logger.warning("Unknown tool call: %s", name)
-                return None
-
-        # ── JSON FALLBACK PATH ─────────────────────────────────────
-        content = message.get("content", "")
-        if not content:
-            return None
-
-        parsed = _parse_json(content)
-        if parsed:
-            # Convert old JSON format to new internal format
-            old_type = parsed.get("type", "reply")
-            if old_type == "search_flight":
-                return {"type": "search", "params": parsed.get("params", {})}
-            elif old_type == "clarify":
-                return {
-                    "type": "clarify",
-                    "content": parsed.get("reply", ""),
-                    "missing": parsed.get("missing", []),
-                }
-            else:
-                return {"type": "reply", "content": parsed.get("reply", parsed.get("content", content))}
-
-        # Raw text as reply (last resort)
-        return {"type": "reply", "content": content}
-
-    # ── Message Builder ──────────────────────────────────────────────────────
-
-    def _build_messages(
+    async def _chat_openai(
         self,
         message: str,
         history: list[dict[str, str]] | None = None,
-        agent: str = "ticketing",
-        context: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Build message list with system context, history, and current message.
+        system_override: str | None = None,
+    ) -> LLMResponse:
+        """Call OpenAI-compatible endpoint with proper function calling."""
+        from app.services.aviation_db import (
+            get_airline_dict_for_prompt,
+            get_airport_dict_for_prompt,
+        )
 
-        If context is provided (RAG results or last search results), it's added as a system-level
-        reminder so the LLM can answer follow-up questions intelligently.
-        """
-        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
-
-        if context:
-            messages.append({
-                "role": "system",
-                "content": f"[THÔNG TIN PHIÊN LÀM VIỆC HIỆN TẠI]\n{context}",
-            })
+        system = system_override or self._build_system_prompt()
+        messages = [{"role": "system", "content": system}]
 
         if history:
-            for msg in history[-10:]:  # keep last 10
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role in ("user", "assistant"):
-                    messages.append({"role": role, "content": content})
+            for msg in history[-15:]:  # Keep last 15 for context window
+                role = "assistant" if msg.get("role") == "assistant" else "user"
+                messages.append({"role": role, "content": msg.get("content", "")})
 
-        # Add current message if not already in history
-        if not history or not history[-1].get("content", "").startswith(message[:10]):
-            messages.append({"role": "user", "content": message})
+        messages.append({"role": "user", "content": message})
 
-        return messages
+        tools = [t.model_dump(exclude_none=True) for t in AVAILABLE_TOOLS]
+
+        payload = {
+            "model": "oc/deepseek-v4-flash-free",  # DeepSeek via 9Router/OmniRoute
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": 0.3,
+            "max_tokens": 2048,
+            "stream": False,  # Force JSON response (OmniRoute defaults to SSE)
+        }
+
+        resp = await self._http_client.post(
+            f"{self._openai_base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._openai_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        return self._parse_openai_response(data)
+
+    def _parse_openai_response(self, data: dict[str, Any]) -> LLMResponse:
+        """Parse OpenAI-compatible response, handling function calls."""
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        content = message.get("content", "")
+        tool_calls = message.get("tool_calls")
+
+        # Check for tool/function calls first
+        if tool_calls:
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                name = func.get("name", "")
+                try:
+                    args = json.loads(func.get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    args = {}
+
+                if name in (TOOL_SEARCH_FLIGHT, TOOL_BOOK_FLIGHT):
+                    logger.info("Tool call: %s with args=%s", name, args)
+                    return LLMResponse(
+                        type="tool_call",
+                        content={"tool": name, "args": args},
+                        tool_name=name,
+                        tool_args=args,
+                    )
+
+        # If there's content text, return it
+        if content and content.strip():
+            return LLMResponse(type="text", content=content.strip())
+
+        # Fallback: try to find embedded JSON tool call in content
+        return self._parse_text_fallback(content or "")
+
+    # ── Gemini Provider ────────────────────────────────────────────────
+
+    async def _chat_gemini(
+        self,
+        message: str,
+        history: list[dict[str, str]] | None = None,
+        system_override: str | None = None,
+    ) -> LLMResponse:
+        """Call Google Gemini API with function calling."""
+        if not self._gemini_api_key:
+            raise ValueError("Gemini API key not configured")
+
+        from app.services.aviation_db import (
+            get_airline_dict_for_prompt,
+            get_airport_dict_for_prompt,
+        )
+
+        system = system_override or self._build_system_prompt()
+
+        # Build Gemini content array
+        contents = []
+        if history:
+            for msg in history[-10:]:
+                role = "model" if msg.get("role") == "assistant" else "user"
+                contents.append({"role": role, "parts": [{"text": msg.get("content", "")}]})
+        contents.append({"role": "user", "parts": [{"text": message}]})
+
+        # Convert tools to Gemini function declarations
+        function_declarations = []
+        for tool in AVAILABLE_TOOLS:
+            func = tool.function
+            function_declarations.append({
+                "name": func["name"],
+                "description": func.get("description", ""),
+                "parameters": func.get("parameters", {}),
+            })
+
+        payload = {
+            "contents": contents,
+            "systemInstruction": {"parts": [{"text": system}]},
+            "tools": [{"functionDeclarations": function_declarations}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 2048,
+                "topP": 0.95,
+            },
+        }
+
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
+        resp = await self._http_client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._gemini_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        return self._parse_gemini_response(data)
+
+    def _parse_gemini_response(self, data: dict[str, Any]) -> LLMResponse:
+        """Parse Gemini response, handling function calls."""
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return LLMResponse(type="text", content="Xin lỗi, không nhận được phản hồi từ AI.")
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+
+        text = ""
+        for part in parts:
+            if "text" in part:
+                text += part["text"]
+            elif "functionCall" in part:
+                fc = part["functionCall"]
+                name = fc.get("name", "")
+                args = fc.get("args", {})
+                logger.info("Gemini function call: %s with args=%s", name, args)
+                if name in (TOOL_SEARCH_FLIGHT, TOOL_BOOK_FLIGHT):
+                    return LLMResponse(
+                        type="tool_call",
+                        content={"tool": name, "args": args},
+                        tool_name=name,
+                        tool_args=args,
+                    )
+
+        if text.strip():
+            # Check for embedded JSON in text
+            return self._parse_text_fallback(text.strip())
+
+        return LLMResponse(type="text", content=text.strip())
+
+    # ── Text fallback parser (for models without function calling) ──────
+
+    def _parse_text_fallback(self, text: str) -> LLMResponse:
+        """
+        Extract tool calls from plain text.
+        Used as last resort when function calling API doesn't trigger.
+        """
+        text = text.strip()
+        if not text:
+            return LLMResponse(type="text", content="")
+
+        # Try JSON code fence block
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                if isinstance(parsed, dict) and "tool" in parsed:
+                    return LLMResponse(
+                        type="tool_call",
+                        content={"tool": parsed["tool"], "args": parsed.get("args", {})},
+                        tool_name=parsed["tool"],
+                        tool_args=parsed.get("args", {}),
+                    )
+            except json.JSONDecodeError:
+                pass
+
+        # Try bare JSON
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and "tool" in parsed:
+                return LLMResponse(
+                    type="tool_call",
+                    content={"tool": parsed["tool"], "args": parsed.get("args", {})},
+                    tool_name=parsed["tool"],
+                    tool_args=parsed.get("args", {}),
+                )
+        except json.JSONDecodeError:
+            pass
+
+        # Try embedded {"tool": ...} pattern
+        tool_match = re.search(
+            r'(\{"tool":\s*"[^"]+"\s*,\s*"args":\s*\{.*?\}\s*\})',
+            text, re.DOTALL
+        )
+        if tool_match:
+            try:
+                parsed = json.loads(tool_match.group(1))
+                if isinstance(parsed, dict) and "tool" in parsed:
+                    return LLMResponse(
+                        type="tool_call",
+                        content={"tool": parsed["tool"], "args": parsed.get("args", {})},
+                        tool_name=parsed["tool"],
+                        tool_args=parsed.get("args", {}),
+                    )
+            except json.JSONDecodeError:
+                pass
+
+        return LLMResponse(type="text", content=text)
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _build_system_prompt(self) -> str:
+        """Build system prompt with live aviation data."""
+        try:
+            from app.services.aviation_db import (
+                get_airline_dict_for_prompt,
+                get_airport_dict_for_prompt,
+            )
+            today = datetime.now().strftime("%d/%m/%Y")
+            return SYSTEM_PROMPT.format(
+                airport_info=get_airport_dict_for_prompt(),
+                airline_info=get_airline_dict_for_prompt(),
+                today=today,
+            )
+        except Exception:
+            # Fallback if aviation_db not available
+            return SYSTEM_PROMPT.format(
+                airport_info="",
+                airline_info="",
+                today=datetime.now().strftime("%d/%m/%Y"),
+            )
+
+    def _query_rag(self, message: str) -> str:
+        """Query RAG service for relevant aviation knowledge."""
+        try:
+            from app.services.rag_service import get_rag_service
+
+            svc = get_rag_service()
+            if svc and hasattr(svc, "format_context"):
+                return svc.format_context(message, top_k=4)
+        except Exception:
+            logger.debug("RAG query failed (non-critical):", exc_info=True)
+        return ""
+
+    async def close(self):
+        await self._http_client.aclose()
 
 
-# ── Singleton ──────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Smart Agent specific functions: parse_intent, chat_response, extract_flight_info
+# ═══════════════════════════════════════════════════════════════════════════
 
-_instance: LLMGateway | None = None
+_SMART_SYSTEM_PROMPT = """Bạn là Smart Agent của ABTrip — trợ lý AI cho phòng vé máy bay.
+Phân loại yêu cầu của khách hàng và hỗ trợ tư vấn.
+
+Hôm nay là: {today}
+
+CÁC DỊCH VỤ:
+1. Vé máy bay (flight) — tìm vé, đặt vé nội địa & quốc tế
+2. Fast Track (fasttrack) — dịch vụ ưu tiên sân bay Nội Bài
+3. eSIM (esim) — eSIM du lịch toàn cầu
+4. Visa (visa) — tư vấn visa, hộ chiếu
+5. Khác (other) — các yêu cầu khác
+"""
+
+
+async def parse_intent(user_message: str) -> str:
+    """
+    Phân loại ý định người dùng: flight | fasttrack | esim | visa | other.
+
+    Sử dụng LLM để phân tích câu hỏi tự nhiên và trả về intent tương ứng.
+    """
+    logger.info("parse_intent: %s", user_message[:80])
+    try:
+        gateway = get_llm()
+        today = datetime.now().strftime("%d/%m/%Y")
+        system = _SMART_SYSTEM_PROMPT.format(today=today)
+
+        # Simple keyword-based pre-check for speed
+        msg_lower = user_message.lower()
+        keywords_visa = ["visa", "hộ chiếu", "passport", "xuất cảnh", "nhập cảnh", "schengen", "thị thực"]
+        keywords_fasttrack = ["fast track", "fasttrack", "ưu tiên", "vip", "lounge", "phòng chờ", "nhanh"]
+        keywords_esim = ["esim", "sim", "data", "4g", "5g", "internet", "wifi"]
+        keywords_flight = ["vé", "bay", "máy bay", "chuyến", "giá vé", "đặt vé", "hành trình",
+                          "sân bay", "khứ hồi", "một chiều", "tuyến bay"]
+
+        score = {"visa": 0, "fasttrack": 0, "esim": 0, "flight": 0}
+
+        for kw in keywords_visa:
+            if kw in msg_lower:
+                score["visa"] += 1
+        for kw in keywords_fasttrack:
+            if kw in msg_lower:
+                score["fasttrack"] += 1
+        for kw in keywords_esim:
+            if kw in msg_lower:
+                score["esim"] += 1
+        for kw in keywords_flight:
+            if kw in msg_lower:
+                score["flight"] += 1
+
+        # If keyword scoring is confident, return immediately
+        max_score = max(score.values())
+        if max_score >= 2:
+            best = [k for k, v in score.items() if v == max_score]
+            if len(best) == 1:
+                logger.info("parse_intent: keyword match -> %s (score=%d)", best[0], max_score)
+                return best[0]
+
+        # Fallback: use LLM to classify
+        prompt = f"""{system}
+
+Phân loại câu sau thuộc dịch vụ nào (chỉ trả về MỘT từ: flight, fasttrack, esim, visa, other):
+
+Câu: "{user_message}"
+
+Phân loại:"""
+        try:
+            resp = await gateway._chat_openai(prompt, history=None, system_override=system)
+            if resp.type == "text":
+                text = resp.content.strip().lower()
+                for intent in ["flight", "fasttrack", "esim", "visa", "other"]:
+                    if intent in text:
+                        return intent
+        except Exception:
+            pass
+
+        # Ultimate fallback based on max score
+        if max_score > 0:
+            best = max(score, key=score.get)
+            return best
+        return "other"
+    except Exception as e:
+        logger.error("parse_intent error: %s", e)
+        return "other"
+
+
+async def chat_response(user_message: str, context: dict | None = None) -> str:
+    """
+    Trả lời tự nhiên dựa trên user_message và context (lịch sử, tenant info, etc.)
+    Sử dụng LLM để sinh câu trả lời thân thiện, chuyên nghiệp.
+    """
+    logger.info("chat_response: %s", user_message[:80])
+    try:
+        gateway = get_llm()
+        today = datetime.now().strftime("%d/%m/%Y")
+
+        # Build context string
+        ctx_str = ""
+        if context:
+            if context.get("tenant_name"):
+                ctx_str += f"CTV: {context['tenant_name']}\n"
+            if context.get("tier"):
+                ctx_str += f"Gói: {context['tier']}\n"
+            if context.get("intent"):
+                ctx_str += f"Dịch vụ: {context['intent']}\n"
+            if context.get("flight_info"):
+                ctx_str += f"Thông tin chuyến bay: {context['flight_info']}\n"
+            if context.get("history"):
+                ctx_str += f"Lịch sử hội thoại:\n"
+                for msg in context["history"][-6:]:
+                    role = "Khách" if msg.get("role") == "user" else "Agent"
+                    ctx_str += f"  {role}: {msg.get('content', '')[:200]}\n"
+
+        system = f"""Bạn là trợ lý AI của ABTrip Smart Agent — phòng vé máy bay thông minh.
+
+Hôm nay là: {today}
+
+QUY TẮC:
+1. Trả lời tự nhiên, thân thiện bằng tiếng Việt như nhân viên phòng vé chuyên nghiệp
+2. Xưng "tôi" gọi khách "bạn/anh/chị"
+3. Ngắn gọn, đi thẳng vào vấn đề
+4. Nếu cần tra vé — hướng dẫn khách dùng ô tìm kiếm
+5. Nếu hỏi về dịch vụ — tư vấn nhiệt tình
+6. Nếu không biết — hẹn gọi lại hoặc chuyển tổng đài
+
+Thông tin ngữ cảnh:
+{ctx_str or "Chưa có thông tin cụ thể."}
+"""
+
+        resp = await gateway.chat(user_message, history=None, system_override=system)
+        if resp.type == "text":
+            return resp.content
+        return "Rất tiếc, tôi chưa thể xử lý yêu cầu này ngay. Bạn vui lòng để lại thông tin, tôi sẽ chuyển cho bộ phận hỗ trợ."
+    except Exception as e:
+        logger.error("chat_response error: %s", e)
+        return "Xin lỗi, hệ thống đang gặp sự cố. Vui lòng thử lại sau ít phút hoặc gọi hotline 1900 1234."
+
+
+def extract_flight_info(text: str) -> dict:
+    """
+    Trích xuất thông tin chuyến bay từ text: ngày, tháng, tuyến bay.
+    Trả về dict với các keys: from_airport, to_airport, depart_date, return_date (optional).
+
+    Parse các dạng tiếng Việt tự nhiên:
+    - "Hà Nội đi Sài Gòn ngày 25/07"
+    - "vé SG HN tuần sau"
+    - "từ Đà Nẵng ra Hà Nội ngày mai"
+    - "HAN-SGN 01/08/2026"
+    """
+    logger.info("extract_flight_info: %s", text[:120])
+
+    # Airport mapping
+    airports = {
+        "hà nội": "HAN", "ha noi": "HAN", "hanoi": "HAN", "hn": "HAN", "han": "HAN",
+        "sài gòn": "SGN", "sg": "SGN", "saigon": "SGN", "sai gon": "SGN", "tphcm": "SGN", "hồ chí minh": "SGN", "ho chi minh": "SGN", "sgn": "SGN",
+        "đà nẵng": "DAD", "da nang": "DAD", "danang": "DAD", "dn": "DAD", "dad": "DAD",
+        "nha trang": "CXR", "nha trang": "CXR", "cxr": "CXR",
+        "phú quốc": "PQC", "phu quoc": "PQC", "pqc": "PQC",
+        "cần thơ": "VCA", "can tho": "VCA", "vca": "VCA",
+        "hải phòng": "HPH", "hai phong": "HPH", "hph": "HPH",
+        "vinh": "VII", "vii": "VII",
+        "huế": "HUI", "hue": "HUI", "hui": "HUI",
+        "đà lạt": "DLI", "da lat": "DLI", "dli": "DLI",
+        "pleiku": "PXU", "pxu": "PXU",
+        "côn đảo": "VCS", "con dao": "VCS", "vcs": "VCS",
+        "thanh hóa": "THD", "thanh hoa": "THD", "thd": "THD",
+        "quy nhơn": "UIH", "quy nhon": "UIH", "uih": "UIH",
+        "tuy hòa": "TBB", "tuy hoa": "TBB", "tbb": "TBB",
+    }
+
+    result = {
+        "from_airport": None,
+        "to_airport": None,
+        "depart_date": None,
+        "return_date": None,
+        "pax_count": 1,
+    }
+
+    msg_lower = text.lower()
+
+    # Extract IATA codes directly (e.g. HAN-SGN, HAN→SGN, HAN SGN)
+    iata_pattern = re.findall(r'\b([A-Z]{3})\s*[-→>]\s*([A-Z]{3})\b', text.upper())
+    if iata_pattern:
+        result["from_airport"] = iata_pattern[0][0]
+        result["to_airport"] = iata_pattern[0][1]
+
+    # If no IATA codes, try airport names
+    if not result["from_airport"] or not result["to_airport"]:
+        found_airports = []
+        for name, code in sorted(airports.items(), key=lambda x: -len(x[0])):
+            if name in msg_lower and code not in found_airports:
+                found_airports.append(code)
+
+        # Detect direction words
+        direction_words = ["đi", "ra", "vào", "lên", "xuống", "về", "tới", "đến", "-", "→", ">", "qua"]
+        # Try prepositions: "từ X đi/ra/vào Y", "X - Y", "X đi Y"
+        from_pattern = re.search(r'(?:từ|ở)\s+([\w\s]+?)\s+(?:đi|ra|vào|lên|xuống|về|tới|đến|qua)\s+([\w\s]+)', msg_lower)
+        if from_pattern:
+            from_text = from_pattern.group(1).strip()
+            to_text = from_pattern.group(2).strip()
+            from_code = None
+            to_code = None
+            # Find airport codes from matched text
+            for name, code in sorted(airports.items(), key=lambda x: -len(x[0])):
+                if name in from_text:
+                    from_code = code
+                if name in to_text:
+                    to_code = code
+            if from_code and to_code:
+                result["from_airport"] = from_code
+                result["to_airport"] = to_code
+
+        # Fallback to simple positional
+        if not result["from_airport"] and len(found_airports) >= 2:
+            # Find direction words to order
+            for word in ["đi", "ra", "vào", "lên", "xuống", "về", "tới", "đến"]:
+                if word in msg_lower:
+                    parts = re.split(r'\b' + word + r'\b', msg_lower, maxsplit=1)
+                    if len(parts) == 2:
+                        # First airport is likely from, second is to
+                        # Check which part each airport code belongs to
+                        part_airports = [[], []]
+                        for name, code in sorted(airports.items(), key=lambda x: -len(x[0])):
+                            if name in parts[0] and code not in part_airports[0] + part_airports[1]:
+                                part_airports[0].append(code)
+                            if name in parts[1] and code not in part_airports[0] + part_airports[1]:
+                                part_airports[1].append(code)
+                        if part_airports[0] and part_airports[1]:
+                            result["from_airport"] = part_airports[0][0]
+                            result["to_airport"] = part_airports[1][0]
+                            break
+
+        # Last fallback: just use first 2 found
+        if not result["from_airport"] and len(found_airports) >= 2:
+            result["from_airport"] = found_airports[0]
+            result["to_airport"] = found_airports[1]
+
+    # Extract dates
+    today = datetime.now()
+    current_year = today.year
+
+    # Pattern: DD/MM/YYYY or DD-MM-YYYY
+    date_pattern = re.findall(r'(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?', text)
+    if date_pattern:
+        parsed_dates = []
+        for d, m, y in date_pattern:
+            day = int(d)
+            month = int(m)
+            year = int(y) if y else current_year
+            if year < 100:
+                year += 2000
+            try:
+                parsed_dates.append(datetime(year, month, day))
+            except ValueError:
+                continue
+
+        if parsed_dates:
+            result["depart_date"] = parsed_dates[0].strftime("%d/%m/%Y")
+            if len(parsed_dates) >= 2:
+                result["return_date"] = parsed_dates[1].strftime("%d/%m/%Y")
+
+    # Pattern: "ngày X tháng Y"
+    if not result["depart_date"]:
+        ngay_match = re.search(r'ngày\s+(\d{1,2})\s*[/\-]?\s*(\d{1,2})?', msg_lower)
+        if ngay_match:
+            day = int(ngay_match.group(1))
+            month = int(ngay_match.group(2)) if ngay_match.group(2) else today.month
+            year = current_year
+            try:
+                dt = datetime(year, month, day)
+                if dt < today:
+                    dt = dt.replace(year=year + 1)
+                result["depart_date"] = dt.strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+
+    # Relative dates
+    if not result["depart_date"]:
+        if "ngày mai" in msg_lower:
+            dt = today + __import__("datetime", fromlist=["timedelta"]).timedelta(days=1)
+            result["depart_date"] = dt.strftime("%d/%m/%Y")
+        elif "ngày kia" in msg_lower:
+            dt = today + __import__("datetime", fromlist=["timedelta"]).timedelta(days=2)
+            result["depart_date"] = dt.strftime("%d/%m/%Y")
+        elif "cuối tuần" in msg_lower:
+            # Find next Saturday
+            days_ahead = 5 - today.weekday()  # Saturday = 5
+            if days_ahead <= 0:
+                days_ahead += 7
+            dt = today + __import__("datetime", fromlist=["timedelta"]).timedelta(days=days_ahead)
+            result["depart_date"] = dt.strftime("%d/%m/%Y")
+
+    # Extract passenger count
+    pax_patterns = [
+        (r'(\d+)\s*(?:vé|người|khách|pax)', 1),
+        (r'(\d+)\s*(?:người lớn|adult|lon)', 1),
+        (r'(\d+)\s*(?:trẻ em|child|tre em)', 1),
+    ]
+    total_pax = 0
+    for pat, group in pax_patterns:
+        m = re.search(pat, msg_lower)
+        if m:
+            total_pax += int(m.group(group))
+    if total_pax > 0:
+        result["pax_count"] = total_pax
+
+    logger.info("extract_flight_info result: %s", result)
+    return result
+
+
+# ─── Singleton ──────────────────────────────────────────────────────────────
+
+_gateway: LLMGateway | None = None
 
 
 def get_llm() -> LLMGateway:
-    global _instance
-    if _instance is None:
-        _instance = LLMGateway()
-    return _instance
+    global _gateway
+    if _gateway is None:
+        _gateway = LLMGateway()
+    return _gateway
 
 
-async def close_llm() -> None:
-    """Close the LLM gateway (no-op for now)."""
-    pass
+async def close_llm():
+    global _gateway
+    if _gateway:
+        await _gateway.close()
+        _gateway = None

@@ -1,189 +1,237 @@
 """
-Aviation Domain Database — Kiến thức hàng không Việt Nam.
+Aviation Database — Vietnamese domain knowledge for the Ticketing Bot.
 
-Cung cấp lookup nhanh:
-- Mã sân bay ↔ tên/địa danh
-- Mã hãng bay ↔ tên hãng
-- Địa danh địa phương → mã sân bay
+Contains:
+- Airport codes (IATA → name, city, aliases)
+- City/region aliases (Vietnamese local names → airport code)
+- Airline codes (IATA → name, policies)
+- Vietnamese date/time parsers
 """
 
-from __future__ import annotations
-
-import logging
-from typing import Optional
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Airport Database — mapping code ↔ thông tin
-# ---------------------------------------------------------------------------
+# ─── AIRPORTS ───────────────────────────────────────────────────────────────
+# Each entry: IATA → {name, city, vietnam (bool), searchable_names (list)}
 
 AIRPORTS: dict[str, dict] = {
-    "HAN": {"name": "Nội Bài", "city": "Hà Nội", "region": "Bắc Bộ"},
-    "SGN": {"name": "Tân Sơn Nhất", "city": "Hồ Chí Minh", "region": "Nam Bộ"},
-    "DAD": {"name": "Đà Nẵng", "city": "Đà Nẵng", "region": "Trung Bộ"},
-    "CXR": {"name": "Cam Ranh", "city": "Nha Trang", "region": "Trung Bộ"},
-    "HUI": {"name": "Phú Bài", "city": "Huế", "region": "Trung Bộ"},
-    "PQC": {"name": "Phú Quốc", "city": "Phú Quốc", "region": "Nam Bộ"},
-    "HPH": {"name": "Cát Bi", "city": "Hải Phòng", "region": "Bắc Bộ"},
-    "VCA": {"name": "Trà Nóc", "city": "Cần Thơ", "region": "Nam Bộ"},
-    "VII": {"name": "Vinh", "city": "Vinh", "region": "Bắc Trung Bộ"},
-    "TBB": {"name": "Đông Tác", "city": "Tuy Hòa", "region": "Trung Bộ"},
-    "DLI": {"name": "Liên Khương", "city": "Đà Lạt", "region": "Tây Nguyên"},
-    "PXU": {"name": "Pleiku", "city": "Pleiku", "region": "Tây Nguyên"},
-    "UIH": {"name": "Phù Cát", "city": "Quy Nhơn", "region": "Trung Bộ"},
-    "VCL": {"name": "Chu Lai", "city": "Tam Kỳ", "region": "Trung Bộ"},
-    "BMV": {"name": "Buôn Ma Thuột", "city": "Buôn Ma Thuột", "region": "Tây Nguyên"},
-    "CAH": {"name": "Cà Mau", "city": "Cà Mau", "region": "Nam Bộ"},
-    "VCS": {"name": "Côn Đảo", "city": "Côn Đảo", "region": "Nam Bộ"},
-    "DIN": {"name": "Điện Biên", "city": "Điện Biên", "region": "Tây Bắc"},
-    # International
-    "BKK": {"name": "Suvarnabhumi", "city": "Bangkok", "region": "Quốc tế"},
-    "DMK": {"name": "Don Mueang", "city": "Bangkok", "region": "Quốc tế"},
-    "NRT": {"name": "Narita", "city": "Tokyo", "region": "Quốc tế"},
-    "KIX": {"name": "Kansai", "city": "Osaka", "region": "Quốc tế"},
-    "ICN": {"name": "Incheon", "city": "Seoul", "region": "Quốc tế"},
-    "SIN": {"name": "Changi", "city": "Singapore", "region": "Quốc tế"},
-    "KUL": {"name": "Kuala Lumpur", "city": "Kuala Lumpur", "region": "Quốc tế"},
-    "PEK": {"name": "Beijing Capital", "city": "Bắc Kinh", "region": "Quốc tế"},
-    "PVG": {"name": "Pudong", "city": "Thượng Hải", "region": "Quốc tế"},
-    "CDG": {"name": "Charles de Gaulle", "city": "Paris", "region": "Quốc tế"},
-    "SFO": {"name": "San Francisco", "city": "San Francisco", "region": "Quốc tế"},
+    # ── Vietnam ──────────────────────────────────────────────────────────
+    "HAN": {"name": "Nội Bài", "city": "Hà Nội", "vietnam": True,
+            "aliases": ["hà nội", "hanoi", "hn", "nội bài", "noi bai", "thủ đô", "ha noi"]},
+    "SGN": {"name": "Tân Sơn Nhất", "city": "Hồ Chí Minh", "vietnam": True,
+            "aliases": ["hồ chí minh", "tphcm", "hcm", "sg", "sài gòn", "saigon", "saigòn",
+                        "sai gon", "tân sơn nhất", "tan son nhat", "sì gòn",
+                        "thành phố hồ chí minh", "tp hcm"]},
+    "DAD": {"name": "Đà Nẵng", "city": "Đà Nẵng", "vietnam": True,
+            "aliases": ["đà nẵng", "da nang", "dn", "đà nẵng city"]},
+    "CXR": {"name": "Cam Ranh", "city": "Nha Trang", "vietnam": True,
+            "aliases": ["nha trang", "cam ranh", "nt", "nha trang city"]},
+    "PQC": {"name": "Phú Quốc", "city": "Phú Quốc", "vietnam": True,
+            "aliases": ["phú quốc", "phu quoc", "pq", "đảo ngọc", "dao ngoc"]},
+    "HUI": {"name": "Phú Bài", "city": "Huế", "vietnam": True,
+            "aliases": ["huế", "hue", "phú bài", "phu bai"]},
+    "HPH": {"name": "Cát Bi", "city": "Hải Phòng", "vietnam": True,
+            "aliases": ["hải phòng", "hai phong", "hp", "cát bi", "cat bi"]},
+    "VCA": {"name": "Trà Nóc", "city": "Cần Thơ", "vietnam": True,
+            "aliases": ["cần thơ", "can tho", "ct", "trà nóc", "tra noc", "tây đô"]},
+    "VII": {"name": "Vinh", "city": "Vinh", "vietnam": True,
+            "aliases": ["vinh", "nghệ an", "nghe an", "na"]},
+    "TBB": {"name": "Đông Tác", "city": "Tuy Hòa", "vietnam": True,
+            "aliases": ["tuy hòa", "tuy hoa", "phú yên", "phu yen"]},
+    "DLI": {"name": "Liên Khương", "city": "Đà Lạt", "vietnam": True,
+            "aliases": ["đà lạt", "da lat", "dalat", "liên khương", "lien khuong"]},
+    "VKG": {"name": "Rạch Giá", "city": "Rạch Giá", "vietnam": True,
+            "aliases": ["rạch giá", "rach gia", "kiên giang", "kien giang"]},
+    "CAH": {"name": "Cà Mau", "city": "Cà Mau", "vietnam": True,
+            "aliases": ["cà mau", "ca mau"]},
+    "VCS": {"name": "Côn Đảo", "city": "Côn Đảo", "vietnam": True,
+            "aliases": ["côn đảo", "con dao", "côn sơn", "con son"]},
+    "VDH": {"name": "Đồng Hới", "city": "Đồng Hới", "vietnam": True,
+            "aliases": ["đồng hới", "dong hoi", "quảng bình", "quang binh"]},
+    "PHA": {"name": "Đồng Tác", "city": "Phan Rang", "vietnam": True,
+            "aliases": ["phan rang", "ninh thuận", "ninh thuan"]},
+
+    # ── International (common from Vietnam) ───────────────────────────────
+    "BKK": {"name": "Suvarnabhumi", "city": "Bangkok", "vietnam": False,
+            "aliases": ["bangkok", "bkk", "thái lan", "thailand"]},
+    "DMK": {"name": "Don Mueang", "city": "Bangkok", "vietnam": False,
+            "aliases": ["bangkok don mueang", "dmk"]},
+    "NRT": {"name": "Narita", "city": "Tokyo", "vietnam": False,
+            "aliases": ["tokyo narita", "narita", "nhật bản", "nhat ban"]},
+    "KIX": {"name": "Kansai", "city": "Osaka", "vietnam": False,
+            "aliases": ["osaka", "kansai", "kix"]},
+    "ICN": {"name": "Incheon", "city": "Seoul", "vietnam": False,
+            "aliases": ["seoul", "incheon", "hàn quốc", "han quoc", "soul"]},
+    "SIN": {"name": "Changi", "city": "Singapore", "vietnam": False,
+            "aliases": ["singapore", "sin", "xinh ga po"]},
+    "KUL": {"name": "Kuala Lumpur", "city": "Kuala Lumpur", "vietnam": False,
+            "aliases": ["kuala lumpur", "malaysia", "kl"]},
+    "PEK": {"name": "Beijing Capital", "city": "Beijing", "vietnam": False,
+            "aliases": ["bắc kinh", "bac kinh", "beijing", "pek", "trung quốc"]},
+    "PVG": {"name": "Pudong", "city": "Shanghai", "vietnam": False,
+            "aliases": ["thượng hải", "thuong hai", "shanghai", "pvg"]},
+    "CDG": {"name": "Charles de Gaulle", "city": "Paris", "vietnam": False,
+            "aliases": ["paris", "pháp", "phap", "cdg"]},
+    "SFO": {"name": "San Francisco", "city": "San Francisco", "vietnam": False,
+            "aliases": ["san francisco", "sf", "mỹ", "my", "usa", "california"]},
+    "LAX": {"name": "Los Angeles", "city": "Los Angeles", "vietnam": False,
+            "aliases": ["los angeles", "la", "mỹ", "my"]},
+    "SYD": {"name": "Sydney", "city": "Sydney", "vietnam": False,
+            "aliases": ["sydney", "úc", "uc", "australia"]},
+    "SGN_BKK": {"name": "SGN→BKK", "city": "SGN→BKK", "vietnam": False, "aliases": []},
 }
 
-# ---------------------------------------------------------------------------
-# Địa danh → mã sân bay (alias mapping)
-# ---------------------------------------------------------------------------
-
-LOCATION_ALIASES: dict[str, str] = {
-    # Hà Nội / Miền Bắc
-    "hà nội": "HAN", "hn": "HAN", "hanoi": "HAN", "hà nôi": "HAN",
-    "hải phòng": "HPH", "hải phong": "HPH", "hp": "HPH", "haiphong": "HPH",
-    "vinh": "VII",
-    "điện biên": "DIN", "dien bien": "DIN",
-    # Miền Trung
-    "đà nẵng": "DAD", "dn": "DAD", "da nang": "DAD", "đà nẳng": "DAD", "đn": "DAD",
-    "huế": "HUI", "hue": "HUI",
-    "nha trang": "CXR", "nt": "CXR", "nha trang": "CXR", "nhatrang": "CXR",
-    "tuy hòa": "TBB", "tuy hoa": "TBB",
-    "quy nhơn": "UIH", "quy nhon": "UIH", "qn": "UIH",
-    "tam kỳ": "VCL", "tam ky": "VCL",
-    # Miền Nam
-    "sài gòn": "SGN", "sg": "SGN", "hồ chí minh": "SGN", "hcm": "SGN",
-    "saigon": "SGN", "saì gòn": "SGN", "sai gon": "SGN", "tp hcm": "SGN",
-    "cần thơ": "VCA", "can tho": "VCA", "ct": "VCA",
-    "cà mau": "CAH", "ca mau": "CAH",
-    "côn đảo": "VCS", "con dao": "VCS", "condao": "VCS",
-    # Tây Nguyên
-    "đà lạt": "DLI", "da lat": "DLI", "dalat": "DLI", "đà lạt": "DLI",
-    "pleiku": "PXU",
-    "buôn ma thuột": "BMV", "buon ma thuot": "BMV", "bmt": "BMV",
-    # Đảo
-    "phú quốc": "PQC", "phu quoc": "PQC", "pq": "PQC",
-    # Quốc tế
-    "bangkok": "BKK", "băng cốc": "BKK", "bang coc": "BKK",
-    "tokyo": "NRT",
-    "seoul": "ICN",
-    "singapore": "SIN",
-    "kuala lumpur": "KUL",
-    "bắc kinh": "PEK",
-    "thượng hải": "PVG",
-    "paris": "CDG",
-    "san francisco": "SFO",
-}
-
-# ---------------------------------------------------------------------------
-# Airline Database
-# ---------------------------------------------------------------------------
+# ─── AIRLINES ────────────────────────────────────────────────────────────────
 
 AIRLINES: dict[str, dict] = {
-    "VN": {"name": "Vietnam Airlines", "short": "VNA", "type": "full-service"},
-    "VJ": {"name": "VietJet Air", "short": "VietJet", "type": "low-cost"},
-    "QH": {"name": "Bamboo Airways", "short": "Bamboo", "type": "full-service"},
-    "BL": {"name": "Pacific Airlines", "short": "Pacific", "type": "low-cost"},
-    "VU": {"name": "Vietravel Airlines", "short": "Vietravel", "type": "full-service"},
-    "SQ": {"name": "Singapore Airlines", "short": "SIA", "type": "full-service"},
-    "TG": {"name": "Thai Airways", "short": "Thai", "type": "full-service"},
-    "KE": {"name": "Korean Air", "short": "Korean", "type": "full-service"},
-    "JL": {"name": "Japan Airlines", "short": "JAL", "type": "full-service"},
-    "CX": {"name": "Cathay Pacific", "short": "Cathay", "type": "full-service"},
-    "EK": {"name": "Emirates", "short": "Emirates", "type": "full-service"},
+    "VN": {"name": "Vietnam Airlines", "full_name": "Vietnam Airlines (Hãng hàng không Quốc gia Việt Nam)",
+           "code": "VN", "vietnam": True, "iata": "VN", "icao": "HVN",
+           "policy": {
+               "baggage": {"checked": "20-32kg tùy hạng vé", "carry_on": "1 kiện 7-10kg"},
+               "change_fee": "200.000-500.000đ tùy hạng, chênh lệch giá vé",
+               "cancel": "Phí 30-70% giá vé tùy hạng",
+               "checkin": "Mở 24h, đóng 40 phút trước giờ bay (nội địa), 50 phút (quốc tế)",
+               "meal": "Có suất ăn theo hạng vé",
+           }},
+    "VJ": {"name": "VietJet Air", "full_name": "VietJet Air (Hàng không giá rẻ Thế hệ mới)",
+           "code": "VJ", "vietnam": True, "iata": "VJ", "icao": "VJC",
+           "policy": {
+               "baggage": {"checked": "Mua thêm (15-40kg)", "carry_on": "1 kiện 7kg"},
+               "change_fee": "150.000-300.000đ + chênh lệch, có thể đổi tên",
+               "cancel": "Phí 50-100% tùy hạng vé",
+               "checkin": "Mở 24h, đóng 40 phút trước giờ bay",
+               "meal": "Có mua thêm với giá 30.000-70.000đ/suất",
+           }},
+    "QH": {"name": "Bamboo Airways", "full_name": "Bamboo Airways (Hàng không Tre Việt)",
+           "code": "QH", "vietnam": True, "iata": "QH", "icao": "BAV",
+           "policy": {
+               "baggage": {"checked": "20-32kg tùy hạng", "carry_on": "1 kiện 7kg"},
+               "change_fee": "0-400.000đ tùy hạng",
+               "cancel": "Phí 20-80% tùy hạng",
+               "checkin": "Mở 24h, đóng 40 phút trước giờ bay",
+               "meal": "Có bao gồm hoặc mua thêm tùy hạng",
+           }},
+    "BL": {"name": "Pacific Airlines", "full_name": "Pacific Airlines",
+           "code": "BL", "vietnam": True, "iata": "BL", "icao": "PIC",
+           "policy": {
+               "baggage": {"checked": "Mua thêm", "carry_on": "1 kiện 7kg"},
+               "change_fee": "200.000đ + chênh lệch",
+               "cancel": "Phí 50-100%",
+               "checkin": "Mở 24h, đóng 40 phút",
+               "meal": "Mua thêm",
+           }},
+    "VU": {"name": "Vietravel Airlines", "full_name": "Vietravel Airlines",
+           "code": "VU", "vietnam": True, "iata": "VU", "icao": "VTL",
+           "policy": {
+               "baggage": {"checked": "20kg", "carry_on": "1 kiện 7kg"},
+               "change_fee": "Liên hệ hãng",
+               "cancel": "Liên hệ hãng",
+               "checkin": "Mở 24h trước",
+               "meal": "Tùy chọn",
+           }},
 }
 
-AIRLINE_ALIASES: dict[str, str] = {
-    "vietnam airlines": "VN", "vna": "VN", "hàng không": "VN",
-    "vietjet": "VJ", "viet jet": "VJ", "vj": "VJ",
-    "bamboo": "QH", "bamboo airways": "QH",
-    "pacific": "BL", "pacific airlines": "BL",
-    "vietravel": "VU", "vietravel airlines": "VU",
-}
+# ─── VIETNAMESE CITY → AIRPORT MAPPING ───────────────────────────────────────
+
+def lookup_airport(text: str) -> str | None:
+    """Look up airport IATA code from any search text (name, alias, city)."""
+    text_clean = text.strip().lower()
+    for code, info in AIRPORTS.items():
+        if code == text_clean or code.lower() == text_clean:
+            return code
+        for alias in info.get("aliases", []):
+            if alias == text_clean or text_clean in [alias, f"{alias} bay", f"ra {alias}"]:
+                return code
+    # Fuzzy: check if the text contains any alias
+    for code, info in AIRPORTS.items():
+        for alias in info.get("aliases", []):
+            if alias in text_clean or text_clean in alias:
+                return code
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Chính sách hãng (tổng quan)
-# ---------------------------------------------------------------------------
+def normalize_person_count(text: str) -> int:
+    """Parse Vietnamese number words to integers."""
+    mapping = {
+        "một": 1, "hai": 2, "ba": 3, "bốn": 4, "năm": 5,
+        "sáu": 6, "bảy": 7, "tám": 8, "chín": 9, "mười": 10,
+        "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+        "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
+    }
+    text_clean = text.strip().lower()
+    if text_clean in mapping:
+        return mapping[text_clean]
 
-POLICIES: dict[str, dict] = {
-    "hành lý": {
-        "VN": "Hành lý xách tay 1 kiện 10kg. Hành lý ký gửi: Economy 20-23kg, Business 32kg.",
-        "VJ": "Hành lý xách tay 1 kiện 7kg. Hành lý ký gửi mua thêm theo gói (15-40kg).",
-        "QH": "Hành lý xách tay 1 kiện 10kg. Hành lý ký gửi 20-32kg tùy hạng vé.",
-        "chung": "Hành lý mua thêm tại sân bay thường đắt hơn mua online 30-50%.",
-    },
-    "đổi vé": {
-        "VN": "Đổi tên: không được. Đổi ngày: mất phí 200.000-500.000đ + chênh lệch giá.",
-        "VJ": "Đổi tên: 100.000-300.000đ. Đổi ngày: mất phí + chênh lệch giá.",
-        "QH": "Đổi tên: không được. Đổi ngày: mất phí 0-300.000đ + chênh lệch.",
-        "chung": "Vé rẻ (Economy Smart/Eco) thường không được đổi. Vé thường có phí đổi.",
-    },
-    "hủy vé": {
-        "VN": "Hủy trước 24h: mất 30-50% giá vé. Hủy sau 24h: mất 70-100%.",
-        "VJ": "Hủy trước 3h: mất 50-70%. Hủy sau: mất 100%. Vé rẻ không hoàn.",
-        "QH": "Hủy trước 24h: mất 30%. Hủy sau: mất 70-100%.",
-        "chung": "Vé khuyến mãi thường không hoàn tiền khi hủy.",
-    },
-    "giấy tờ": {
-        "nội địa": "Người lớn: CMND/CCCD còn hạn. Trẻ em dưới 14t: giấy khai sinh hoặc hộ chiếu. Trẻ sơ sinh: giấy khai sinh.",
-        "quốc tế": "Hộ chiếu còn hạn 6 tháng. Visa (nếu cần). Giấy tờ trẻ em: hộ chiếu riêng hoặc kèm cha/mẹ.",
-    },
-}
-
-
-def resolve_location(text: str) -> str | None:
-    """Tra cứu địa danh → mã sân bay."""
-    key = text.lower().strip()
-    return LOCATION_ALIASES.get(key)
-
-
-def resolve_airline(text: str) -> str | None:
-    """Tra cứu tên hãng → mã hãng."""
-    key = text.lower().strip()
-    return AIRLINE_ALIASES.get(key)
+    import re
+    nums = re.findall(r'\d+', text)
+    if nums:
+        return int(nums[0])
+    return 1  # default
 
 
 def get_airport_info(code: str) -> dict | None:
-    """Lấy thông tin sân bay."""
-    return AIRPORTS.get(code.upper())
+    """Get airport details by IATA code."""
+    if code in AIRPORTS:
+        return {"code": code, **AIRPORTS[code]}
+    return None
 
 
-def get_all_airports() -> dict:
-    """Lấy tất cả sân bay."""
-    return dict(AIRPORTS)
+def get_airline_info(code: str) -> dict | None:
+    """Get airline details by IATA code."""
+    upper_code = code.upper()
+    if upper_code in AIRLINES:
+        return AIRLINES[upper_code]
+    # Try full name match
+    for airline_code, info in AIRLINES.items():
+        if code.lower() in info["name"].lower():
+            return info
+    return None
 
 
-def get_policy(topic: str, airline: str = "") -> str:
-    """Lấy thông tin chính sách."""
-    topic = topic.lower()
-    if topic in POLICIES:
-        policy_data = POLICIES[topic]
-        result = []
-        if airline and airline in policy_data:
-            result.append(f"✈️ **{airline}**: {policy_data[airline]}")
-        elif airline:
-            result.append(f"**{airline}**: Không có thông tin chi tiết.")
-        if "chung" in policy_data:
-            result.append(f"📌 *Lưu ý chung*: {policy_data['chung']}")
-        return "\n\n".join(result) if result else "Không có thông tin cho chủ đề này."
-    else:
-        # Check sub-topics like "nội địa", "quốc tế"
-        return POLICIES.get("giấy tờ", {}).get(topic, "Không có thông tin.")
+def list_all_airports() -> list[dict]:
+    """List all airports for LLM context."""
+    result = []
+    for code, info in sorted(AIRPORTS.items()):
+        result.append({
+            "code": code,
+            "name": info["name"],
+            "city": info["city"],
+            "vietnam": info["vietnam"]
+        })
+    return result
+
+
+def list_all_airlines() -> list[dict]:
+    """List all airlines with basic info."""
+    result = []
+    for code, info in sorted(AIRLINES.items()):
+        result.append({
+            "code": code,
+            "name": info["name"],
+            "full_name": info.get("full_name", ""),
+            "vietnam": info["vietnam"],
+            "baggage_policy": info["policy"]["baggage"]["checked"]
+        })
+    return result
+
+
+# ─── HELPER: airport/city lookup for LLM prompt injection ─────────────────────
+
+def get_airport_dict_for_prompt() -> str:
+    """Returns a formatted airport list for use in LLM system prompts."""
+    lines = ["Địa danh → Mã sân bay (IATA):"]
+    for code, info in sorted(AIRPORTS.items()):
+        aliases = ", ".join(info["aliases"][:5])
+        lines.append(f"  • {info['city']} ({info['name']}): {code} — gợi ý: {aliases}")
+    return "\n".join(lines)
+
+
+def get_airline_dict_for_prompt() -> str:
+    """Returns a formatted airline list for LLM prompts."""
+    lines = ["Hãng bay Việt Nam:"]
+    for code, info in sorted(AIRLINES.items()):
+        if info["vietnam"]:
+            lines.append(f"  • {info['full_name']} — mã: {code}")
+    lines.append("\nHãng bay quốc tế thường gặp:")
+    intl = {code: info for code, info in AIRLINES.items() if not info["vietnam"]}
+    if intl:
+        for code, info in sorted(intl.items()):
+            lines.append(f"  • {info['name']} — mã: {code}")
+    return "\n".join(lines)

@@ -1,28 +1,27 @@
-"""
-FastAPI application entry point for the ABTrip Flight Booking Backend.
-
-This module initializes the FastAPI app, configures CORS, logging,
-and registers all API routers.
-"""
-
-from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+import traceback
+from typing import AsyncGenerator, List, Any, Dict, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from app.api.bookings import router as bookings_router
 from app.api.reference import router as reference_router
 from app.api.health import router as health_router
-from app.api.chat import router as chat_router
+# from app.api.chat import router as chat_router  # CRIT-2: replaced by smart_agent
 from app.services.config import get_settings
 from app.services.abtrip_client import close_client
 from app.services.llm_gateway import close_llm
+# Rag_service removed — not integrated with smart_agent (CRIT-1)
+from app.services.smart_agent import router as smart_agent_router
+from app.services.api_flights import router as api_flights_router
+from app.services.api_fasttrack import router as api_fasttrack_router
+from app.services.api_esim import router as api_esim_router
+from app.services.api_visa import router as api_visa_router
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -31,11 +30,10 @@ from app.services.llm_gateway import close_llm
 def configure_logging() -> None:
     """Set up application-wide logging."""
     settings = get_settings()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(level=log_level,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S")
 
 
 # ---------------------------------------------------------------------------
@@ -46,15 +44,19 @@ def configure_logging() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Application lifespan handler.
-
-    - Startup: configure logging
-    - Shutdown: clean up resources (close HTTP client)
+    - Startup: configure logging and load settings
+    - Shutdown: clean up resources (close HTTP client, LLM client)
     """
     configure_logging()
     logger = logging.getLogger(__name__)
     logger.info("ABTrip backend starting up...")
+    # Load settings and initialize clients during startup
+    settings = get_settings()
+    # Initialize RAG (vector search)
+    # await init_rag()  # CRIT-1: dead code, not integrated
     yield
     logger.info("ABTrip backend shutting down...")
+    # await close_rag()  # CRIT-1: dead code, not integrated
     await close_client()
     await close_llm()
 
@@ -65,12 +67,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="ABTrip Flight Booking Backend",
-    description="Backend service for ABTrip flight booking system. "
-                "Wraps AGT cấp 1 API endpoints.",
+    description="Backend service for ABTrip flight booking system. Wraps AGT cấp 1 API endpoints.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
+# Reload settings if needed during development, but primarily rely on lifespan
 settings = get_settings()
 
 # ---------------------------------------------------------------------------
@@ -80,11 +82,10 @@ settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "*",  # Allow all origins in production
         settings.frontend_origin,
         "http://localhost:4321",
         "http://127.0.0.1:4321",
-        "http://localhost:3000",
+        "http://192.168.1.253:4321", # Allow LAN access from frontend
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -100,7 +101,6 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     """Catch unhandled exceptions and return a structured error response."""
     logger = logging.getLogger(__name__)
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-    import traceback
     tb = traceback.format_exc()
     return JSONResponse(
         status_code=500,
@@ -108,7 +108,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
             "StatusCode": "500",
             "Success": False,
             "Message": f"Internal server error: {str(exc)}",
-            "Traceback": tb,
+            #"Traceback": tb, # Disabled for security reasons in production
         },
     )
 
@@ -120,33 +120,65 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 app.include_router(bookings_router)
 app.include_router(reference_router)
 app.include_router(health_router)
-app.include_router(chat_router)
+# app.include_router(chat_router)  # CRIT-2: disabled — use smart_agent instead
+app.include_router(smart_agent_router)
+app.include_router(api_flights_router)
+app.include_router(api_fasttrack_router)
+app.include_router(api_esim_router)
+app.include_router(api_visa_router)
 
-# Serve static chat page at root (avoids mount path conflicts)
+# ---------------------------------------------------------------------------
+# Smart Agent Landing Page
+# ---------------------------------------------------------------------------
 
-@app.get("/")
-async def serve_chat():
-    import os as _os
-    _chat_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "static", "chat.html")
-    if _os.path.isfile(_chat_path):
-        return FileResponse(_chat_path, media_type="text/html")
-    return HTMLResponse("<h1>Chat page not found</h1>", status_code=404)
+import os
+from fastapi.responses import HTMLResponse
+from pathlib import Path
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def smart_agent_landing():
+    """Serve Smart Agent main chat page (1-screen ChatGPT-style)."""
+    landing_path = TEMPLATES_DIR / "main.html"
+    if landing_path.exists():
+        return HTMLResponse(content=landing_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Smart Agent</h1><p>Loading...</p>")
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    """Run the application with uvicorn."""
+@app.get("/main", response_class=HTMLResponse, include_in_schema=False)
+async def main_landing():
+    """Serve main landing page (dark gold theme)."""
+    landing_path = TEMPLATES_DIR / "main.html"
+    if landing_path.exists():
+        return HTMLResponse(content=landing_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>ABTrip Smart Agent</h1><p>Loading...</p>")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # This block is executed when running `python -m app.main`
+    settings = get_settings()
+    configure_logging()
+    logger = logging.getLogger(__name__)
+    logger.info("ABTrip backend starting up...")
+
+    # Use PORT env var if set (e.g. from hosting), otherwise config defaults to 6969
+    port = int(os.environ.get("PORT", settings.backend_port))
+
     uvicorn.run(
         "app.main:app",
         host=settings.backend_host,
-        port=settings.backend_port,
+        port=port,
         reload=False,
         log_level=settings.log_level.lower(),
     )
 
-
-if __name__ == "__main__":
-    main()

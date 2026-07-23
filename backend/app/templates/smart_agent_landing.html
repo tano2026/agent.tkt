@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Agent - Phòng vé máy bay AI</title>
+    <meta name="description" content="Smart Agent - Giải pháp phòng vé máy bay AI cho CTV và đại lý. Đặt vé tự động, tích hợp Fast Track, Visa, eSIM.">
+    <style>
+        :root {
+            --teal: #006885; --teal-dark: #004d66; --gold: #DBA011; --gold-dark: #B8860B;
+            --white: #ffffff; --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb;
+            --gray-600: #4b5563; --gray-800: #1f2937; --gray-900: #111827;
+            --shadow: 0 1px 3px rgba(0,0,0,0.1); --shadow-lg: 0 4px 36px rgba(0,0,0,0.12);
+            --radius: 12px; --radius-sm: 8px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--gray-50); color: var(--gray-900); line-height: 1.6; }
+        .container { max-width: 1024px; margin: 0 auto; padding: 0 20px; }
+        header { background: linear-gradient(135deg, var(--teal-dark), var(--teal)); color: white; padding: 16px 0; position: sticky; top: 0; z-index: 50; box-shadow: var(--shadow); }
+        header .container { display: flex; align-items: center; justify-content: space-between; }
+        .logo { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+        .logo span { color: var(--gold); }
+        .header-cta { background: var(--gold); color: var(--gray-900); border: none; padding: 10px 24px; border-radius: 50px; font-weight: 700; font-size: 14px; cursor: pointer; text-decoration: none; }
+        .hero { background: linear-gradient(135deg, var(--teal-dark), var(--teal), #004d66); color: white; padding: 60px 0 80px; text-align: center; }
+        .hero h1 { font-size: clamp(32px,6vw,52px); font-weight: 800; margin-bottom: 16px; line-height: 1.15; }
+        .hero h1 span { color: var(--gold); }
+        .hero p { font-size: clamp(16px,3vw,20px); opacity: 0.9; max-width: 600px; margin: 0 auto 32px; }
+        .hero-badges { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 32px; }
+        .badge { background: rgba(255,255,255,0.12); padding: 8px 20px; border-radius: 50px; font-size: 13px; font-weight: 500; border: 1px solid rgba(255,255,255,0.15); }
+        .hero-cta { display: inline-block; background: var(--gold); color: var(--gray-900); padding: 16px 48px; border-radius: 50px; font-weight: 700; font-size: 18px; text-decoration: none; transition: all 0.3s; }
+        .hero-cta:hover { background: var(--gold-dark); transform: translateY(-2px); }
+        .stats { background: white; border-bottom: 1px solid var(--gray-200); padding: 40px 0; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 20px; text-align: center; }
+        .stat-number { font-size: 28px; font-weight: 800; color: var(--teal); }
+        .stat-label { font-size: 13px; color: var(--gray-600); margin-top: 4px; }
+        section { padding: 60px 0; }
+        .section-title { text-align: center; margin-bottom: 48px; }
+        .section-title h2 { font-size: 28px; font-weight: 800; margin-bottom: 12px; }
+        .section-title p { color: var(--gray-600); max-width: 500px; margin: 0 auto; font-size: 15px; }
+        .services-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; }
+        .service-card { background: white; border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow); border: 1px solid var(--gray-200); }
+        .service-icon { font-size: 36px; margin-bottom: 16px; }
+        .service-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+        .service-card p { font-size: 14px; color: var(--gray-600); }
+        .pricing-bg { background: linear-gradient(135deg, var(--teal-dark), var(--teal)); }
+        .pricing-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px; }
+        .pricing-card { background: white; border-radius: var(--radius); padding: 32px 24px; text-align: center; box-shadow: var(--shadow-lg); position: relative; }
+        .pricing-card.featured { transform: scale(1.05); border: 2px solid var(--gold); }
+        .pricing-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--gold); color: var(--gray-900); padding: 4px 20px; border-radius: 50px; font-size: 12px; font-weight: 700; }
+        .pricing-name { font-size: 16px; font-weight: 600; color: var(--gray-600); margin-bottom: 8px; }
+        .pricing-price { font-size: 36px; font-weight: 800; margin-bottom: 4px; }
+        .pricing-price span { font-size: 14px; font-weight: 400; color: var(--gray-600); }
+        .pricing-desc { font-size: 13px; color: var(--gray-600); margin-bottom: 20px; }
+        .pricing-features { list-style: none; text-align: left; margin-bottom: 24px; }
+        .pricing-features li { padding: 8px 0; font-size: 14px; color: var(--gray-600); border-bottom: 1px solid var(--gray-100); }
+        .pricing-features .check { color: #10b981; font-weight: 700; }
+        .pricing-features .cross { color: #ef4444; }
+        .pricing-cta { display: block; background: var(--teal); color: white; padding: 12px; border-radius: var(--radius-sm); font-weight: 700; text-decoration: none; }
+        .pricing-cta.gold { background: var(--gold); color: var(--gray-900); }
+        .steps { display: grid; grid-template-columns: repeat(4,1fr); gap: 20px; }
+        .step { text-align: center; }
+        .step-num { width: 48px; height: 48px; background: var(--teal); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; margin: 0 auto 16px; }
+        .step h4 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+        .step p { font-size: 13px; color: var(--gray-600); }
+        .testimonial-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 20px; }
+        .testimonial { background: white; border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); border: 1px solid var(--gray-200); }
+        .testimonial p { font-size: 14px; color: var(--gray-600); font-style: italic; margin-bottom: 12px; }
+        .testimonial-author { font-size: 13px; font-weight: 700; }
+        .testimonial-role { font-size: 12px; color: var(--gray-600); }
+        .faq-list { max-width: 640px; margin: 0 auto; }
+        .faq-item { border-bottom: 1px solid var(--gray-200); padding: 16px 0; }
+        .faq-q { font-weight: 600; font-size: 15px; cursor: pointer; display: flex; justify-content: space-between; }
+        .faq-a { font-size: 14px; color: var(--gray-600); padding-top: 8px; display: none; }
+        .faq-item.active .faq-a { display: block; }
+        .cta-section { background: linear-gradient(135deg, var(--teal-dark), var(--teal)); color: white; text-align: center; padding: 60px 0; }
+        .cta-section h2 { font-size: 32px; font-weight: 800; margin-bottom: 12px; }
+        .cta-section p { font-size: 16px; opacity: 0.9; margin-bottom: 32px; }
+        .cta-form { display: flex; gap: 12px; max-width: 480px; margin: 0 auto; }
+        .cta-form input { flex: 1; padding: 14px 20px; border-radius: 50px; border: none; font-size: 15px; outline: none; }
+        .cta-form button { background: var(--gold); color: var(--gray-900); border: none; padding: 14px 32px; border-radius: 50px; font-weight: 700; font-size: 15px; cursor: pointer; }
+        footer { background: var(--gray-900); color: var(--gray-200); padding: 40px 0; font-size: 14px; }
+        footer .container { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+        footer a { color: var(--gold); text-decoration: none; }
+        .footer-links { display: flex; gap: 20px; }
+        @media (max-width: 768px) { .services-grid { grid-template-columns: 1fr; } .pricing-grid { grid-template-columns: 1fr; } .pricing-card.featured { transform: none; } .steps { grid-template-columns: repeat(2,1fr); } .testimonial-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 640px) { .stats-grid { grid-template-columns: repeat(2,1fr); } .cta-form { flex-direction: column; } }
+    </style>
+</head>
+<body>
+    <header><div class="container"><div class="logo">Smart <span>Agent</span></div><a href="#dangky" class="header-cta">Đăng ký ngay</a></div></header>
+
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badges">
+                <span class="badge">✅ AGT Cấp 1</span><span class="badge">🤖 AI Booking</span>
+                <span class="badge">🛩️ Fast Track Nội Bài</span><span class="badge">📱 eSIM toàn cầu</span>
+            </div>
+            <h1>Phòng vé AI — <span>Bán thông minh</span><br>Lời tự động</h1>
+            <p>Biến điện thoại thành phòng vé máy bay chuyên nghiệp. AI lo đặt vé, CTV chỉ việc nhận hoa hồng. Tích hợp Fast Track Nội Bài, Visa, eSIM.</p>
+            <a href="#dangky" class="hero-cta">🚀 Đăng ký CTV miễn phí</a>
+        </div>
+    </section>
+
+    <section class="stats"><div class="container"><div class="stats-grid">
+        <div><div class="stat-number">250K+</div><div class="stat-label">CTV tiềm năng</div></div>
+        <div><div class="stat-number">230K tỷ</div><div class="stat-label">Thị trường vé máy bay</div></div>
+        <div><div class="stat-number">&lt;3 phút</div><div class="stat-label">Tốc độ đặt vé</div></div>
+        <div><div class="stat-number">5</div><div class="stat-label">Dịch vụ tích hợp</div></div>
+    </div></div></section>
+
+    <section><div class="container">
+        <div class="section-title"><h2>5 dịch vụ — 1 nền tảng</h2><p>CTV chỉ cần một app để làm tất cả</p></div>
+        <div class="services-grid">
+            <div class="service-card"><div class="service-icon">✈️</div><h3>Vé máy bay</h3><p>Đặt vé nội địa & quốc tế qua AI chat. AGT Cấp 1 — giá gốc hãng, đặt 3 phút.</p></div>
+            <div class="service-card"><div class="service-icon">🛩️</div><h3>Fast Track Nội Bài</h3><p>Dịch vụ ưu tiên sân bay độc quyền. Onsite staff 24/7. Margin 200-500K/đơn.</p></div>
+            <div class="service-card"><div class="service-icon">🛂</div><h3>Visa & Hộ chiếu</h3><p>Tư vấn thủ tục visa AI, hỗ trợ hồ sơ trọn gói. Margin 1.5-5tr/hồ sơ.</p></div>
+            <div class="service-card"><div class="service-icon">📱</div><h3>eSIM du lịch</h3><p>eSIM toàn cầu — auto delivery. Khách quét QR là xong. Cross-sell mỗi đơn vé.</p></div>
+            <div class="service-card"><div class="service-icon">📋</div><h3>Dashboard thông minh</h3><p>Quản lý đơn hàng, doanh thu, hoa hồng real-time. Chat với AI hỗ trợ.</p></div>
+            <div class="service-card"><div class="service-icon">🤖</div><h3>AI tư vấn 24/7</h3><p>Hiểu tiếng Việt tự nhiên — "vé SG cuối tuần 2 người". Không cần đào tạo.</p></div>
+        </div>
+    </div></section>
+
+    <section style="background:white;"><div class="container">
+        <div class="section-title"><h2>Cách hoạt động</h2><p>4 bước để trở thành CTV Smart Agent</p></div>
+        <div class="steps">
+            <div class="step"><div class="step-num">1</div><h4>Đăng ký</h4><p>Tạo tài khoản CTV miễn phí — không cần GP lữ hành</p></div>
+            <div class="step"><div class="step-num">2</div><h4>Chia sẻ link</h4><p>Gửi link booking cho khách — AI tự tư vấn</p></div>
+            <div class="step"><div class="step-num">3</div><h4>Nhận hoa hồng</h4><p>Khách đặt thành công — hoa hồng tự động</p></div>
+            <div class="step"><div class="step-num">4</div><h4>Nâng cấp Pro</h4><p>Từ 199K/tháng — margin cao, dashboard riêng</p></div>
+        </div>
+    </div></section>
+
+    <section class="pricing-bg" style="color:white;"><div class="container">
+        <div class="section-title"><h2 style="color:white;">Chọn gói phù hợp</h2><p style="opacity:0.8;">Từ miễn phí đến chuyên nghiệp</p></div>
+        <div class="pricing-grid">
+            <div class="pricing-card">
+                <div class="pricing-name">CTV Cơ bản</div>
+                <div class="pricing-price">0₫ <span>/tháng</span></div>
+                <div class="pricing-desc">Dùng thử — tự động book vé</div>
+                <ul class="pricing-features">
+                    <li><span class="check">✓</span> Chat AI đặt vé</li>
+                    <li><span class="check">✓</span> Hoa hồng 10-30K/vé</li>
+                    <li><span class="check">✓</span> Fast Track + eSIM</li>
+                    <li><span class="cross">✗</span> White-label</li>
+                    <li><span class="cross">✗</span> Dashboard riêng</li>
+                </ul>
+                <a href="#dangky" class="pricing-cta">Đăng ký miễn phí</a>
+            </div>
+            <div class="pricing-card featured">
+                <div class="pricing-badge">Phổ biến nhất</div>
+                <div class="pricing-name">Đại Lý Pro</div>
+                <div class="pricing-price">199K <span>/tháng</span></div>
+                <div class="pricing-desc">Bán chuyên nghiệp — margin cao hơn</div>
+                <ul class="pricing-features">
+                    <li><span class="check">✓</span> Mọi tính năng CTV</li>
+                    <li><span class="check">✓</span> Hoa hồng 50-150K/vé</li>
+                    <li><span class="check">✓</span> Fast Track margin 300K</li>
+                    <li><span class="check">✓</span> Link booking brand riêng</li>
+                    <li><span class="check">✓</span> Dashboard doanh thu</li>
+                </ul>
+                <a href="#dangky" class="pricing-cta gold">Dùng thử 7 ngày</a>
+            </div>
+            <div class="pricing-card">
+                <div class="pricing-name">White-label</div>
+                <div class="pricing-price">1.5tr <span>/tháng</span></div>
+                <div class="pricing-desc">Phòng vé riêng — brand của bạn</div>
+                <ul class="pricing-features">
+                    <li><span class="check">✓</span> Mọi tính năng Pro</li>
+                    <li><span class="check">✓</span> Hoa hồng 100-300K/vé</li>
+                    <li><span class="check">✓</span> Domain + brand riêng</li>
+                    <li><span class="check">✓</span> API key riêng</li>
+                    <li><span class="check">✓</span> Priority support 24/7</li>
+                </ul>
+                <a href="#dangky" class="pricing-cta">Liên hệ tư vấn</a>
+            </div>
+        </div>
+    </div></section>
+
+    <section><div class="container">
+        <div class="section-title"><h2>CTV đang nói gì?</h2></div>
+        <div class="testimonial-grid">
+            <div class="testimonial"><p>"Từ ngày dùng Smart Agent, mình không cần gọi điện hỏi giá từng hãng. Khách hỏi vé SG — gửi link, 3 phút sau có giá."</p><div class="testimonial-author">Minh Tuấn</div><div class="testimonial-role">CTV, Đà Nẵng</div></div>
+            <div class="testimonial"><p>"Fast Track Nội Bài là killer. Khách Tây nào cũng mua, margin 300K/đơn mà không cần làm gì. AI tự tư vấn."</p><div class="testimonial-author">Hoàng Anh</div><div class="testimonial-role">Đại lý Pro, Hà Nội</div></div>
+            <div class="testimonial"><p>"Phí 199K/tháng — ngày đầu đã lấy lại vốn. Khách hỏi visa Nhật, AI trả lời luôn, mình chỉ việc chốt deal."</p><div class="testimonial-author">Thanh Thảo</div><div class="testimonial-role">Đại lý Pro, TP HCM</div></div>
+            <div class="testimonial"><p>"Trước làm mướn cho phòng vé, giờ có app riêng. Khách nói 'Tao đi SG cuối tuần' — gửi link, tự động hết."</p><div class="testimonial-author">Quốc Bảo</div><div class="testimonial-role">CTV, Cần Thơ</div></div>
+        </div>
+    </div></section>
+
+    <section style="background:white;"><div class="container">
+        <div class="section-title"><h2>Câu hỏi thường gặp</h2></div>
+        <div class="faq-list">
+            <div class="faq-item"><div class="faq-q">Tôi cần GP lữ hành không? <span>▼</span></div><div class="faq-a">Không. Bạn là CTV — Smart Agent (công ty có GP lữ hành) đứng ra xuất vé. Bạn chỉ việc giới thiệu khách và nhận hoa hồng.</div></div>
+            <div class="faq-item"><div class="faq-q">Hoa hồng bao nhiêu? <span>▼</span></div><div class="faq-a">CTV Cơ bản: 10-30K/vé. Đại lý Pro: 50-150K/vé. White-label: 100-300K/vé. Fast Track margin riêng 200-500K/đơn.</div></div>
+            <div class="faq-item"><div class="faq-q">Tôi có cần biết gì về hàng không không? <span>▼</span></div><div class="faq-a">Không cần. AI tự hiểu tiếng Việt — khách nói "vé SG ngày mai 2 người" là AI tự tìm vé, báo giá, đặt chỗ.</div></div>
+            <div class="faq-item"><div class="faq-q">Có những dịch vụ nào ngoài vé máy bay? <span>▼</span></div><div class="faq-a">Fast Track + VIP B + Lounge Nội Bài (độc quyền), eSIM du lịch toàn cầu, tư vấn Visa & Hộ chiếu. Tất cả trong một app.</div></div>
+            <div class="faq-item"><div class="faq-q">Tôi muốn brand riêng thì sao? <span>▼</span></div><div class="faq-a">Gói White-label 1.5tr/tháng — domain riêng, logo riêng, API key riêng. Khách tưởng đang book trên trang của bạn.</div></div>
+        </div>
+    </div></section>
+
+    <section class="cta-section" id="dangky"><div class="container">
+        <h2>Bắt đầu bán vé ngay hôm nay</h2>
+        <p>Miễn phí đăng ký. Không cần GP lữ hành. AI đặt vé tự động.</p>
+        <form class="cta-form" id="registerForm">
+            <input type="text" id="nameInput" placeholder="Họ và tên" required>
+            <input type="tel" id="phoneInput" placeholder="Số điện thoại" required>
+            <button type="submit">Đăng ký CTV</button>
+        </form>
+        <p style="margin-top:12px;font-size:13px;opacity:0.7;">Nhập thông tin — AI sẽ gọi lại trong 5 phút</p>
+    </div></section>
+
+    <footer><div class="container">
+        <div>© 2026 Smart Agent. <span style="color:var(--gold);">A product of TANO-AGENCY</span></div>
+        <div class="footer-links"><a href="#">Zalo</a><a href="#">Telegram</a><a href="#">Hotline</a></div>
+    </div></footer>
+
+    <script>
+        document.querySelectorAll('.faq-q').forEach(q => q.addEventListener('click', () => q.parentElement.classList.toggle('active')));
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('nameInput').value;
+            const phone = document.getElementById('phoneInput').value;
+            const btn = e.target.querySelector('button');
+            btn.textContent = 'Đang đăng ký...'; btn.disabled = true;
+            try {
+                const res = await fetch('/api/smart-agent/register', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({name, phone})
+                });
+                const data = await res.json();
+                btn.textContent = res.ok ? '✅ Đăng ký thành công!' : '❌ ' + (data.detail || 'Lỗi');
+                if(res.ok) { document.getElementById('nameInput').value = ''; document.getElementById('phoneInput').value = ''; }
+            } catch { btn.textContent = '❌ Lỗi kết nối'; }
+            setTimeout(() => { btn.textContent = 'Đăng ký CTV'; btn.disabled = false; }, 3000);
+        });
+    </script>
+</body>
+</html>

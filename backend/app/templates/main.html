@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Agent — Phòng Vé AI</title>
+    <meta name="description" content="Phòng Vé AI — Nói 1 câu, AI lo hết. Đặt vé máy bay, Fast Track, eSIM bằng tiếng Việt tự nhiên.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/remixicon/4.6.0/remixicon.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #FAF8F5;
+            --bg-alt: #F5F2ED;
+            --surface: #FFFFFF;
+            --surface-hover: #F0EDE8;
+            --text: #1A1206;
+            --text-muted: #8B7D6B;
+            --text-dim: #B8AFA0;
+            --gold: #D4A843;
+            --gold-dark: #B8860B;
+            --gold-bg: #FFF9E8;
+            --border: #E8E2D8;
+            --border-light: #F0ECE6;
+            --green: #2E7D32;
+            --green-bg: #E8F5E9;
+            --blue: #1565C0;
+            --blue-bg: #E3F2FD;
+            --purple: #7B1FA2;
+            --purple-bg: #F3E5F5;
+            --teal: #00695C;
+            --teal-bg: #E0F2F1;
+            --red: #C62828;
+            --red-bg: #FFEBEE;
+            --radius: 14px;
+            --radius-sm: 10px;
+            --radius-full: 50px;
+        }
+        html { height: 100%; }
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            -webkit-font-smoothing: antialiased;
+            font-weight: 500;
+        }
+
+        h1, h2, h3, h4 { font-weight: 700; letter-spacing: -0.03em; }
+        p { line-height: 1.6; color: var(--text-muted); font-weight: 500; }
+
+        /* ─── Header ─── */
+        header {
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(16px) saturate(1.5);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            flex-shrink: 0;
+        }
+        .logo {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--text);
+            letter-spacing: -0.5px;
+        }
+        .logo span { color: var(--gold); }
+        .logo small {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0;
+            margin-left: 4px;
+        }
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .header-actions a {
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: var(--radius-full);
+            transition: all 0.15s;
+        }
+        .header-btn-outline {
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+        .header-btn-outline:hover { border-color: var(--gold); color: var(--text); }
+        .header-btn-cta {
+            background: var(--text);
+            color: #fff !important;
+        }
+        .header-btn-cta:hover { background: #2A1F0D; }
+
+        /* ─── App Layout ─── */
+        .app-layout {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 880px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* ─── Service Bar — Bento Grid ─── */
+        .service-bar {
+            padding: 16px 0 8px;
+            flex-shrink: 0;
+        }
+        .service-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+        .service-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            padding: 14px 6px;
+            border-radius: var(--radius);
+            background: var(--surface);
+            border: 1px solid var(--border-light);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: var(--text);
+            position: relative;
+        }
+        .service-item:hover {
+            border-color: var(--gold);
+            background: var(--gold-bg);
+            transform: translateY(-2px);
+        }
+        .service-item:active {
+            transform: translateY(0);
+        }
+        .service-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.2s;
+        }
+        .service-item:hover .service-icon {
+            transform: scale(1.08);
+        }
+        .service-icon.flight { background: var(--blue-bg); color: var(--blue); }
+        .service-icon.fasttrack { background: var(--gold-bg); color: var(--gold-dark); }
+        .service-icon.esim { background: var(--teal-bg); color: var(--teal); }
+        .service-icon.visa { background: var(--purple-bg); color: var(--purple); }
+        .service-icon.passport { background: var(--red-bg); color: var(--red); }
+        .service-name {
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            line-height: 1.3;
+            color: var(--text-muted);
+        }
+        .service-badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            background: var(--gold);
+            color: #fff;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 8px;
+            letter-spacing: 0;
+        }
+
+        /* ─── Welcome Screen ─── */
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 24px 0;
+            gap: 6px;
+        }
+        .welcome-icon {
+            width: 56px;
+            height: 56px;
+            background: var(--gold);
+            border-radius: var(--radius);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            margin-bottom: 10px;
+        }
+        .welcome h1 {
+            font-size: clamp(22px, 3.5vw, 30px);
+            color: var(--text);
+        }
+        .welcome h1 span { color: var(--gold-dark); }
+        .welcome p {
+            font-size: 14px;
+            color: var(--text-muted);
+            max-width: 440px;
+        }
+
+        /* ─── Suggestions ─── */
+        .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            justify-content: center;
+            margin-top: 16px;
+            max-width: 520px;
+        }
+        .suggestion-pill {
+            padding: 7px 14px;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: var(--surface);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .suggestion-pill:hover {
+            border-color: var(--gold);
+            color: var(--gold-dark);
+            background: var(--gold-bg);
+        }
+
+        /* ─── Chat Messages ─── */
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+            scroll-behavior: smooth;
+            display: none;
+        }
+        .chat-messages.active { display: block; }
+        .message {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+            animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user { flex-direction: row-reverse; }
+        .message-avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .message.user .message-avatar { background: var(--text); color: #fff; }
+        .message.assistant .message-avatar { background: var(--gold); color: #fff; }
+        .message-bubble {
+            max-width: 78%;
+            padding: 11px 15px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.6;
+            font-weight: 500;
+        }
+        .message.user .message-bubble {
+            background: var(--text);
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        .message.assistant .message-bubble {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 4px;
+            color: var(--text);
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 4px 0;
+        }
+        .typing-indicator span {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            animation: pulse 1.2s infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse { 0%, 80%, 100% { opacity: 0.4; } 40% { opacity: 1; } }
+
+        /* ─── Result cards ─── */
+        .result-card {
+            margin-top: 10px;
+            background: var(--bg-alt);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            border: 1px solid var(--border);
+        }
+        .result-card .flight-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+        }
+        .result-card .flight-row:last-child { border-bottom: none; }
+        .result-card .flight-price { font-weight: 700; color: var(--green); }
+        .result-card .flight-route { font-weight: 600; }
+        .result-card .flight-time { color: var(--text-muted); font-size: 12px; }
+        .result-card .book-btn {
+            padding: 5px 12px;
+            background: var(--gold);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .result-card .service-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--green-bg);
+            color: var(--green);
+            border-radius: var(--radius-full);
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        /* ─── Chat Input ─── */
+        .chat-input-wrap {
+            padding: 8px 0 16px;
+            flex-shrink: 0;
+        }
+        .chat-input-box {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 5px 5px 5px 14px;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .chat-input-box:focus-within {
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(212, 168, 67, 0.1);
+        }
+        .chat-input-box textarea {
+            flex: 1;
+            border: none;
+            outline: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text);
+            resize: none;
+            padding: 8px 0;
+            max-height: 120px;
+            line-height: 1.5;
+        }
+        .chat-input-box textarea::placeholder { color: var(--text-dim); }
+        .chat-send-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: var(--text);
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s;
+        }
+        .chat-send-btn:hover { background: var(--gold-dark); }
+        .chat-send-btn:disabled { background: var(--border); cursor: not-allowed; }
+        .chat-footer-note {
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 6px;
+            font-weight: 500;
+        }
+
+        /* ─── Responsive ─── */
+        @media (max-width: 700px) {
+            .service-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .service-item:nth-last-child(-n+2) { display: flex; } /* show all 5 on 3-col */
+            header { padding: 0 16px; }
+            .app-layout { padding: 0 12px; }
+            .message-bubble { max-width: 88%; font-size: 13px; }
+            .welcome-icon { width: 48px; height: 48px; font-size: 22px; }
+            .header-actions a { font-size: 12px; padding: 6px 12px; }
+            .header-btn-outline { display: none; }
+            .chat-input-box { padding: 4px 4px 4px 12px; }
+            .suggestions { gap: 5px; }
+            .suggestion-pill { font-size: 11px; padding: 5px 12px; }
+        }
+        @media (max-width: 450px) {
+            .service-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 6px;
+            }
+            .service-icon { width: 34px; height: 34px; font-size: 16px; border-radius: 10px; }
+            .service-name { font-size: 10px; }
+            .service-item { padding: 10px 4px; }
+        }
+
+        .chat-messages::-webkit-scrollbar { width: 4px; }
+        .chat-messages::-webkit-scrollbar-track { background: transparent; }
+        .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    </style>
+</head>
+<body>
+
+<!-- ─── Header ─── -->
+<header>
+    <div class="logo">Smart<span>Agent</span> <small>— Phòng Vé AI</small></div>
+    <div class="header-actions">
+        <a href="#" class="header-btn-outline" onclick="showInfo()">Giới thiệu</a>
+        <a href="#" class="header-btn-cta" onclick="scrollToChat()">Đặt ngay</a>
+    </div>
+</header>
+
+<!-- ─── App Layout ─── -->
+<div class="app-layout">
+
+    <!-- ─── Service Bar ─── -->
+    <div class="service-bar">
+        <div class="service-grid">
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi muốn tìm vé máy bay')">
+                <div class="service-icon flight"><i class="ri-flight-takeoff-line"></i></div>
+                <span class="service-name">Vé máy bay</span>
+            </a>
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi muốn đặt Fast Track Nội Bài')">
+                <div class="service-icon fasttrack"><i class="ri-flashlight-line"></i></div>
+                <span class="service-name">Fast Track</span>
+                <span class="service-badge">24/7</span>
+            </a>
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi muốn mua eSIM du lịch')">
+                <div class="service-icon esim"><i class="ri-wifi-line"></i></div>
+                <span class="service-name">eSIM</span>
+            </a>
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi cần tư vấn visa')">
+                <div class="service-icon visa"><i class="ri-passport-line"></i></div>
+                <span class="service-name">Visa</span>
+            </a>
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi cần làm hộ chiếu')">
+                <div class="service-icon passport"><i class="ri-file-text-line"></i></div>
+                <span class="service-name">Hộ chiếu</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- ─── Chat Messages ─── -->
+    <div class="chat-messages" id="chatMessages"></div>
+
+    <!-- ─── Welcome Screen ─── -->
+    <div class="welcome" id="welcomeScreen">
+        <div class="welcome-icon"><i class="ri-robot-2-line" style="color:#fff;font-size:28px;"></i></div>
+        <h1>Nói <span>1 câu</span>,<br>AI lo hết</h1>
+        <p>Đặt vé máy bay, Fast Track, eSIM, Visa, Hộ chiếu — toàn bộ bằng tiếng Việt tự nhiên. Không form, không chọt chọt.</p>
+        <div class="suggestions">
+            <span class="suggestion-pill" onclick="sendSuggestion('Cho tôi vé SG đi Đà Nẵng cuối tuần này, 2 người lớn')">✈️ SG → Đà Nẵng</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Fast Track Nội Bài sáng mai 8h, 2 người bao nhiêu?')">⚡ Fast Track Nội Bài</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Có eSIM nào cho du lịch Hàn Quốc 7 ngày không?')">📱 eSIM Hàn Quốc</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Visa Nhật Bản làm thế nào? Tôi ở Hà Nội')">🛂 Visa Nhật Bản</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Tôi muốn mở phòng vé, cần làm gì?')">💼 Mở phòng vé</span>
+        </div>
+    </div>
+
+    <!-- ─── Chat Input ─── -->
+    <div class="chat-input-wrap">
+        <div class="chat-input-box">
+            <textarea id="chatInput" rows="1" placeholder="Nói 1 câu — 'Vé SG đi Nha Trang thứ 7 2 người'..." onkeydown="handleKey(event)"></textarea>
+            <button class="chat-send-btn" id="sendBtn" onclick="sendMessage()" disabled><i class="ri-arrow-up-line"></i></button>
+        </div>
+        <div class="chat-footer-note">Smart Agent · Dữ liệu thực tế từ AGT Cấp 1</div>
+    </div>
+</div>
+
+<script>
+    // ─── State ───
+    let sessionId = null
+    let isStreaming = false
+    let currentMsgBubble = null
+    let msgCount = 0
+
+    const chatMessages = document.getElementById('chatMessages')
+    const welcomeScreen = document.getElementById('welcomeScreen')
+    const chatInput = document.getElementById('chatInput')
+    const sendBtn = document.getElementById('sendBtn')
+
+    chatInput.addEventListener('input', () => {
+        sendBtn.disabled = !chatInput.value.trim() || isStreaming
+        chatInput.style.height = 'auto'
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px'
+    })
+
+    function scrollToChat() { chatInput.focus() }
+
+    function showInfo() {
+        const msg = '🧠 **Smart Agent** — Phòng Vé AI\n\n5 dịch vụ — 1 cuộc trò chuyện:\n✈️ Vé máy bay (AGT Cấp 1)\n⚡ Fast Track Nội Bài 24/7\n📱 eSIM toàn cầu\n🛂 Visa các nước\n📄 Hộ chiếu online\n\nĐăng ký CTV miễn phí — bán vé kiếm hoa hồng.\n\nNói 1 câu, AI lo hết.'
+        alert(msg.replace(/\*\*/g, '').replace(/•/g, '-'))
+    }
+
+    function sendSuggestion(text) {
+        chatInput.value = text
+        sendBtn.disabled = false
+        sendMessage()
+    }
+
+    function handleKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            sendMessage()
+        }
+    }
+
+    // ─── Send Message ───
+    async function sendMessage() {
+        const text = chatInput.value.trim()
+        if (!text || isStreaming) return
+
+        chatInput.value = ''
+        sendBtn.disabled = true
+        chatInput.style.height = 'auto'
+
+        addMessage(text, 'user')
+
+        // Hide welcome, show messages
+        welcomeScreen.style.display = 'none'
+        chatMessages.classList.add('active')
+
+        currentMsgBubble = addMessage('', 'assistant', true)
+
+        isStreaming = true
+        msgCount++
+
+        try {
+            await streamChat(text)
+        } catch (err) {
+            console.error('Stream error:', err)
+            if (currentMsgBubble) {
+                currentMsgBubble.innerHTML = '❌ Có lỗi kết nối. Vui lòng thử lại sau.'
+            }
+        }
+
+        isStreaming = false
+        sendBtn.disabled = !chatInput.value.trim()
+        scrollToBottom()
+    }
+
+    function addMessage(content, role, isTyping = false) {
+        const div = document.createElement('div')
+        div.className = `message ${role}`
+
+        const avatar = document.createElement('div')
+        avatar.className = 'message-avatar'
+        avatar.textContent = role === 'user' ? 'T' : 'S'
+        div.appendChild(avatar)
+
+        const bubble = document.createElement('div')
+        bubble.className = 'message-bubble'
+        if (isTyping) {
+            bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>'
+        } else {
+            bubble.textContent = content
+        }
+        div.appendChild(bubble)
+
+        chatMessages.appendChild(div)
+        scrollToBottom()
+        return bubble
+    }
+
+    // ─── Stream Chat via SSE ───
+    async function streamChat(message) {
+        const response = await fetch('/api/smart-agent/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                session_id: sessionId || null
+            })
+        })
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: 'Server error' }))
+            if (currentMsgBubble) currentMsgBubble.textContent = '❌ ' + (err.detail || 'Lỗi server')
+            return
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullContent = ''
+
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6).trim()
+                    if (data === '[DONE]') return
+                    try {
+                        const event = JSON.parse(data)
+                        if (event.session_id) sessionId = event.session_id
+                        if (event.type === 'text' && event.content) {
+                            fullContent += event.content
+                            if (currentMsgBubble) {
+                                currentMsgBubble.innerHTML = formatText(fullContent)
+                            }
+                            scrollToBottom()
+                        }
+                        if (event.type === 'done') {
+                            fullContent = event.content || fullContent
+                            if (currentMsgBubble) {
+                                currentMsgBubble.innerHTML = formatText(fullContent)
+                            }
+                            if (event.step === 'search_results' && event.data) {
+                                const card = renderFlightCard(event.data)
+                                if (card) currentMsgBubble.appendChild(card)
+                            }
+                            if (event.step === 'service_result' && event.data) {
+                                const card = renderServiceCard(event.data)
+                                if (card) currentMsgBubble.appendChild(card)
+                            }
+                            scrollToBottom()
+                            return
+                        }
+                        if (event.type === 'error') {
+                            if (currentMsgBubble) currentMsgBubble.textContent = '❌ ' + (event.content || 'Lỗi xử lý')
+                            return
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+    }
+
+    function formatText(text) {
+        return text
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>')
+    }
+
+    function renderFlightCard(data) {
+        if (!data || !data.flights) return null
+        const flights = data.flights.slice(0, 5)
+        if (flights.length === 0) return null
+        const card = document.createElement('div')
+        card.className = 'result-card'
+        card.innerHTML = `<div style="font-weight:700;font-size:13px;margin-bottom:8px;">✈️ Chuyến bay tìm thấy</div>`
+        flights.forEach(f => {
+            const row = document.createElement('div')
+            row.className = 'flight-row'
+            row.innerHTML = `
+                <div>
+                    <div class="flight-route">${f.airline || 'VJ'} — ${f.route || `${data.from}→${data.to}`}</div>
+                    <div class="flight-time">${f.time || 'Xem chi tiết'}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div class="flight-price">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
+                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''}'')">Đặt ngay</button>
+                </div>
+            `
+            card.appendChild(row)
+        })
+        card.innerHTML += `<div style="margin-top:8px;font-size:11px;color:var(--text-muted);text-align:center;">Bạn muốn đặt chuyến nào? Nói 1 câu để tiếp tục</div>`
+        return card
+    }
+
+    function renderServiceCard(data) {
+        if (!data) return null
+        const card = document.createElement('div')
+        card.className = 'result-card'
+        if (data.type === 'fasttrack') {
+            card.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <span style="font-weight:700;font-size:13px;">⚡ Fast Track Nội Bài</span>
+                    <span class="service-tag">Onsite 24/7</span>
+                </div>
+                ${(data.packages || []).map(p => `
+                    <div class="flight-row">
+                        <span>${p.name}</span>
+                        <span class="flight-price">${p.price.toLocaleString()}đ</span>
+                    </div>
+                `).join('')}
+                <button class="book-btn" style="width:100%;margin-top:6px;padding:8px;border-radius:8px;" onclick="sendSuggestion('Đặt Fast Track cho ${data.packages?.[0]?.name || 'gói cơ bản'}'')">Đặt ngay</button>
+            `
+        } else if (data.type === 'esim') {
+            card.innerHTML = `
+                <div style="font-weight:700;font-size:13px;margin-bottom:6px;">📱 eSIM du lịch</div>
+                ${(data.plans || []).slice(0, 4).map(p => `
+                    <div class="flight-row">
+                        <span>${p.country || p.name} — ${p.data || ''}</span>
+                        <span class="flight-price">${p.price.toLocaleString()}đ</span>
+                    </div>
+                `).join('')}
+            `
+        } else if (data.type === 'visa') {
+            card.innerHTML = `
+                <div style="font-weight:700;font-size:13px;margin-bottom:6px;">🛂 Tư vấn Visa</div>
+                <p style="font-size:13px;color:var(--text-muted);">${data.advice || 'Liên hệ để được tư vấn chi tiết'}</p>
+                <button class="book-btn" style="width:100%;margin-top:6px;padding:8px;border-radius:8px;" onclick="sendSuggestion('Tôi cần tư vấn visa, liên hệ tôi'')">Tư vấn ngay</button>
+            `
+        }
+        return card
+    }
+
+    function scrollToBottom() {
+        setTimeout(() => {
+            chatMessages.scrollTop = chatMessages.scrollHeight
+        }, 50)
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => chatInput.focus(), 300)
+    })
+</script>
+
+</body>
+</html>

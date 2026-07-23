@@ -1,1036 +1,1107 @@
 """
-Chat API — AI-powered chat với LLM làm trung tâm.
+Chat API v2 — Premium LLM Bot with multi-turn booking flow.
 
-Luồng:
-1. Gửi message lên LLM (kèm context của turn trước)
-2. LLM quyết định: search_flight hoặc reply
-3. Nếu search → gọi AGT → format → trả về
-4. Nếu reply → trả về luôn
-5. Multi-turn: inject flight results context + hỗ trợ round-trip
+State machine:
+  idle → search_results → collecting_passengers → awaiting_confirmation → booking_result
+
+Features:
+- Proper OpenAI-compatible function calling
+- Redis session persistence (with in-memory fallback)
+- Multi-turn passenger info collection
+- Dynamic suggestions based on context
+- Structured error recovery
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import threading
-import re
-from datetime import datetime, timedelta
-from typing import Any, Optional
+import traceback as tb_mod
+from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
-from app.services.llm_gateway import get_llm
-from app.services.abtrip_client import get_client
-from app.services.flight_formatter import format_flight_results
-from app.services.mock_flights import generate_mock_result
-from app.services.intent_parser import (
-    parse_flight_search, _LOCATION_SLANG, classify_intent, classify_service, parse_passenger_details,
+from app.models.chat import (
+    TOOL_BOOK_FLIGHT,
+    TOOL_SEARCH_FLIGHT,
 )
-from app.services.smart_fasttrack import handle_fasttrack
-from app.services.smart_esim import handle_esim
-from app.services.smart_visa import handle_visa
-from app.services.smart_passport import handle_passport
-from app.services.rag_knowledge import get_rag
-from app.services.conversation_memory import get_memory
-from app.services.flight_watcher import get_flight_watcher
+from app.models.chat import LLMResponse as LLMResponseModel
+from app.services.abtrip_client import get_client as get_abtrip_client
+from app.services.llm_gateway import get_llm
+from app.services.session_service import get_session_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+# ─── Request / Response Models ───────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    message: str
-    agent: str = "ticketing"
-    session_id: str = ""
-    model_config = {"extra": "ignore"}  # Accept extra fields gracefully
+    agent: str = Field("ticketing", description="ticketing | sim | visa")
+    message: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
-    reply: str
-    type: str = "text"
-    data: Optional[dict[str, Any]] = None
-    suggestions: list[str] = []
+    type: str = Field(..., description="text | tool_call | error | booking_result")
+    content: str | dict[str, Any]
+    session_id: str
+    suggestions: list[str] = Field(default_factory=list)
+    step: str = "idle"
+    booking_code: str | None = None
 
 
-# ── Database-backed session store ─────────────────────────────────────
-
-_session_cache = threading.local()
-
-
-def _get_session(session_id: str) -> dict[str, Any]:
-    """Get session from SQLite, cached per-thread for current request.
-
-    Returns a mutable dict — no need to save() explicitly;
-    _flush_session() persists it automatically at the end of the request.
-    """
-    if not session_id:
-        return {}
-    # Check thread-local cache first
-    cache_key = f"s_{session_id}"
-    if hasattr(_session_cache, cache_key):
-        return getattr(_session_cache, cache_key)
-
-    session = get_memory().get_session(session_id)
-    setattr(_session_cache, cache_key, session)
-    return session
+class HistoryResponse(BaseModel):
+    session_id: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def _flush_session(session_id: str) -> None:
-    """Persist cached session back to SQLite and clear cache."""
-    if not session_id:
-        return
-    cache_key = f"s_{session_id}"
-    if hasattr(_session_cache, cache_key):
-        session = getattr(_session_cache, cache_key)
-        try:
-            get_memory().save_session(session_id, session)
-        except Exception as e:
-            logger.warning("Failed to save session %s: %s", session_id[:8], e)
-        delattr(_session_cache, cache_key)
+# ─── Agent Config ────────────────────────────────────────────────────────────
 
-
-# ── Airport codes for reverse lookup ─────────────────────────────────
-_AIRPORT_NAMES = {
-    "SGN": "TP.HCM", "HAN": "Hà Nội", "DAD": "Đà Nẵng",
-    "CXR": "Nha Trang", "DLI": "Đà Lạt", "PQC": "Phú Quốc",
-    "HUI": "Huế", "VCS": "Côn Đảo", "VDH": "Đồng Hới",
-    "VII": "Vinh", "DIN": "Điện Biên",
-    "HPH": "Hải Phòng", "UIH": "Quy Nhơn", "BMV": "Buôn Ma Thuột",
-    "VCL": "Chu Lai",
+AGENT_META = {
+    "ticketing": {
+        "name": "Vé máy bay",
+        "icon": "✈️",
+        "suggestions": [
+            "Tìm vé HN SG ngày mai",
+            "Chính sách hành lý VietJet",
+            "Vé rẻ nhất Đà Nẵng cuối tuần",
+            "Đổi vé máy bay có mất phí không?",
+        ],
+    },
+    "sim": {
+        "name": "SIM du lịch",
+        "icon": "📱",
+        "suggestions": [
+            "eSIM Thái Lan bao nhiêu?",
+            "SIM du lịch Nhật Bản",
+            "eSIM có cần đổi sim không?",
+        ],
+    },
+    "visa": {
+        "name": "Visa & Hộ chiếu",
+        "icon": "🛂",
+        "suggestions": [
+            "Visa du lịch Nhật cần gì?",
+            "Thủ tục xin visa Hàn Quốc",
+            "Hộ chiếu hết hạn làm lại bao lâu?",
+        ],
+    },
 }
 
+
+# ─── Helper: Build system prompt ─────────────────────────────────────────────
+
+def _build_system_prompt(agent: str) -> str:
+    """Build the full system prompt with agent-specific instructions."""
+    from app.services.aviation_db import (
+        get_airline_dict_for_prompt,
+        get_airport_dict_for_prompt,
+    )
+    from app.services.llm_gateway import SYSTEM_PROMPT as BASE_PROMPT
+
+    agent_extensions = {
+        "ticketing": "",
+        "sim": """
+## LƯU Ý CHO AGENT SIM:
+- Bạn là chuyên gia SIM du lịch & eSIM
+- Tư vấn gói SIM/eSIM cho từng quốc gia
+- Giải thích dung lượng, thời hạn, giá cả
+- Hỗ trợ đặt mua eSIM
+- Tính năng SIM đang phát triển, tư vấn cơ bản dựa trên kiến thức
+""",
+        "visa": """
+## LƯU Ý CHO AGENT VISA:
+- Bạn là chuyên gia tư vấn Visa & Hộ chiếu
+- Tư vấn thủ tục xin visa các nước
+- Liệt kê hồ sơ cần chuẩn bị
+- Giải thích thời gian xử lý, lệ phí
+- Bạn CHỈ tư vấn thông tin, không đặt dịch vụ
+""",
+    }
+
+    today = datetime.now().strftime("%d/%m/%Y")
+    base = BASE_PROMPT.format(
+        airport_info=get_airport_dict_for_prompt(),
+        airline_info=get_airline_dict_for_prompt(),
+        today=today,
+    )
+    return base + agent_extensions.get(agent, "")
+
+
+# ─── Helper: Dynamic suggestions ─────────────────────────────────────────────
+
+def _get_suggestions(agent: str, step: str, search_data: dict | None = None) -> list[str]:
+    """Get context-aware suggestions based on current state."""
+    base = AGENT_META.get(agent, AGENT_META["ticketing"])["suggestions"]
+
+    if step == "search_results" and search_data:
+        return [
+            "Chọn chuyến rẻ nhất",
+            "Xem chuyến khác",
+            "So sánh giá các chuyến",
+        ]
+    elif step == "collecting_passengers":
+        return [
+            "Cung cấp thông tin hành khách",
+            "Tôi chưa có sẵn thông tin",
+            "Hủy và tìm lại",
+        ]
+    elif step == "awaiting_confirmation":
+        return [
+            "Xác nhận đặt vé",
+            "Sửa thông tin hành khách",
+            "Hủy đặt vé",
+        ]
+    elif step == "booking_result":
+        return [
+            "Tra cứu vé khác",
+            "Kiểm tra trạng thái vé",
+            "Gọi hỗ trợ",
+        ]
+
+    return base
+
+
+# ─── Helper: Validate passenger info ─────────────────────────────────────────
+
+def _validate_passenger(p: dict[str, Any]) -> list[str]:
+    """Validate passenger info, return list of missing/incorrect fields."""
+    errors = []
+    if not p.get("lastName") or not p.get("firstName"):
+        errors.append("Thiếu họ tên hành khách")
+    if not p.get("gender"):
+        errors.append("Thiếu giới tính (Nam/Nữ)")
+    if not p.get("birthDate") or len(str(p.get("birthDate", ""))) != 8:
+        errors.append("Thiếu ngày sinh (DDMMYYYY)")
+    # Validate date format
+    bd = str(p.get("birthDate", ""))
+    if bd and len(bd) == 8:
+        try:
+            datetime.strptime(bd, "%d%m%Y")
+        except ValueError:
+            errors.append("Ngày sinh không hợp lệ (cần DDMMYYYY)")
+    return errors
+
+
+# ─── Helper: Format flight search results ────────────────────────────────────
+
+def _format_flight_results(data: dict[str, Any], args: dict[str, Any]) -> str:
+    """Format flight search results into user-friendly text."""
+    routes = data.get("data", {}).get("ListRoute", []) if data.get("data") else data.get("ListRoute", [])
+    if not routes:
+        return "Xin lỗi, không tìm thấy chuyến bay phù hợp với yêu cầu của bạn."
+
+    route = routes[0]
+    start = route.get("StartPoint", "???")
+    end = route.get("EndPoint", "???")
+    depart = route.get("DepartDate", "???")
+
+    flights = route.get("ListFlight", [])
+    if not flights:
+        return f"✈️ **{start} → {end}** | {depart}\nKhông có chuyến bay nào."
+
+    parsed = _parse_flights(flights)
+    if not parsed:
+        return f"✈️ **{start} → {end}** | {depart}\nCó chuyến bay nhưng chưa có giá. Vui lòng thử lại."
+
+    lines = [f"✈️ **{start} → {end}** | {depart}\n"]
+
+    cheapest = parsed[0]
+    fastest = min(parsed, key=lambda x: x.get("duration", "999")) if any(p.get("duration") for p in parsed) else None
+
+    for i, p in enumerate(parsed):
+        tags = []
+        if p == cheapest:
+            tags.append("⭐ Rẻ nhất")
+        if fastest and p == fastest and p != cheapest:
+            tags.append("🚀 Nhanh nhất")
+        hour = int(p["depart"][:2]) if p["depart"][:2].isdigit() else 0
+        if hour >= 19:
+            tags.append("💥 Bay đêm")
+        tag_str = "  " + "  ".join(tags) if tags else ""
+        price_str = (
+            f"{p['price']:,.0f}₫/khách"
+            if p["currency"] == "VND"
+            else f"{p['price']:,.0f}{p['currency']}/khách"
+        )
+        dur_str = f" ({p['duration']})" if p.get("duration") else ""
+        lines.append(f"{i+1}. {p['flight']}  {p['depart']}→{p['arrive']}{dur_str}  {price_str}{tag_str}")
+
+    adt = args.get("adt", 1)
+    total_min = cheapest["price"] * adt
+    total_max = parsed[-1]["price"] * adt
+    if total_min == total_max:
+        lines.append(f"\n💰 Tổng {adt} người: {total_min:,.0f}₫")
+    else:
+        lines.append(f"\n💰 Tổng {adt} người: {total_min:,.0f}₫ - {total_max:,.0f}₫")
+    lines.append("\nGõ số thứ tự chuyến bay bạn muốn đặt 👇")
+    return "\n".join(lines)
+
+
+def _parse_flights(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Parse raw AGT flight list into simplified structured array for frontend cards."""
+    parsed = []
+    for f in flights:
+        items = f.get("ListItem", []) or f.get("ListAirItem", []) or []
+        for item in items:
+            price = float(item.get("TotalPrice", 0) or item.get("Price", 0))
+            currency = item.get("Currency", "VND")
+            airline = f.get("Airline", "??")
+            flight_code = f.get("FlightNumber", "") or f.get("FlightCode", "")
+            depart_time = f.get("StartTime", "??")
+            arrive_time = f.get("EndTime", "??")
+            duration = f.get("Duration", "") or f.get("FlightTime", "")
+            session = f.get("Session", "") or item.get("Session", "")
+            parsed.append({
+                "airline": airline,
+                "flight": f"{airline}{flight_code}",
+                "depart": depart_time,
+                "arrive": arrive_time,
+                "duration": duration,
+                "price": price,
+                "currency": currency,
+                "session": session,
+                "AirlineCode": airline,
+                "FlightNumber": flight_code,
+                "DepartTime": depart_time,
+                "ArrivalTime": arrive_time,
+                "AdultFare": price,
+                "AvailableSeats": int(f.get("AvailSeat", 0) or f.get("SeatRemain", "0")),
+            })
+    parsed.sort(key=lambda x: x["price"])
+    return parsed
+
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
-async def chat(body: ChatRequest) -> ChatResponse:
-    message = body.message.strip()
-    agent = body.agent
-    session_id = body.session_id
+async def chat(request: ChatRequest):
+    """Handle chat message with multi-turn state machine."""
+    try:
+        agent = request.agent if request.agent in ("ticketing", "sim", "visa") else "ticketing"
+        sessions = get_session_service()
 
-    if not message:
-        raise HTTPException(status_code=400, detail="Message is required")
-
-    logger.info("Chat [%s] %s: %s", session_id[:8], agent, message[:80])
-
-    if agent == "ticketing":
-        result = await _handle_ticketing(message, session_id)
-        _flush_session(session_id)
-        return result
-    elif agent == "sim":
-        result = await _handle_general(message, session_id, "sim")
-        _flush_session(session_id)
-        return result
-    elif agent == "visa":
-        result = await _handle_general(message, session_id, "visa")
-        _flush_session(session_id)
-        return result
-    else:
-        return ChatResponse(reply=f"Agent '{agent}' chưa được hỗ trợ.")
-
-
-async def _handle_ticketing(message: str, session_id: str) -> ChatResponse:
-    """Ticketing: gọi LLM → nếu LLM muốn tìm vé thì gọi AGT/mock."""
-    session = _get_session(session_id)
-
-    # ── STEP 0: SmartAgent Service Router (only if no pending action) ──
-    pending_action = session.get("pending_action")
-    
-    # Check for flight selection command
-    select_match = re.search(r"^(chọn|chon|dat|đặt)\s+(\d+|[a-zA-Z]{1,2}[0-9a-zA-Z]{1,5})", message, re.IGNORECASE)
-    if select_match and session.get("last_structured_flights"):
-        command = select_match.group(1).lower()
-        value = select_match.group(2)
-        
-        if value.isdigit():
-            return await _handle_flight_selection(message, session, session_id, "index", int(value))
+        # Get or create session
+        if request.session_id:
+            session_data = await sessions.get_session(request.session_id)
+            if not session_data:
+                session_id = await sessions.create_session(agent, request.session_id)
+                # Use the requested session_id
+                session_data = await sessions.get_session(session_id)
+            else:
+                session_id = request.session_id
         else:
-            # If it's not a digit, assume it's a flight code like BL360
-            return await _handle_flight_selection(message, session, session_id, "code", value)
+            session_id = await sessions.create_session(agent)
+            session_data = {"agent": agent, "messages": [], "step": "idle", "search_results": [], "booking_draft": {}}
 
-    if not pending_action:
-        service = classify_service(message)
-        if service != "flight":
-            return await _handle_smart_service(message, session_id, session, service)
+        if session_data is None:
+            session_data = {
+                "agent": agent,
+                "messages": [],
+                "step": "idle",
+                "search_results": [],
+                "booking_draft": {},
+            }
 
-    # ── STEP 1: Kiểm tra nếu đang trong trạng thái chờ hành động ─────────
-    
-    if pending_action == "awaiting_passenger_info":
-        return await _handle_passenger_info_collection(message, session, session_id)
-    
-    if pending_action == "confirm_booking":
-        msg_lower = message.lower().strip()
-        if msg_lower in ("ok", "có", "co", "yes", "y", "đồng ý", "hoàn tất", "dat", "đặt"):
-            session["pending_action"] = None
-            session["history"].append({"role": "user", "content": message})
-            return await _execute_booking(session, session_id)
-        elif msg_lower in ("hủy", "huy", "no", "k", "không", "ko", "khong", "thôi", "thoi", "cancel"):
-            session["pending_action"] = None
-            session["passengers_to_book"] = []
-            session["selected_flight"] = None
-            session["history"].append({"role": "user", "content": message})
-            session["history"].append({"role": "assistant", "content": "👍 Đã hủy đặt vé. Bạn cần tìm gì khác không?"})
-            return ChatResponse(reply="👍 Đã hủy đặt vé. Bạn cần tìm gì khác không?", type="text")
-        else:
-            session["history"].append({"role": "user", "content": message})
-            session["history"].append({"role": "assistant", "content": "Vui lòng gõ 'Đồng ý' hoặc 'OK' để xác nhận, hoặc 'Hủy' để bỏ qua."})
-            return ChatResponse(reply="Vui lòng gõ 'Đồng ý' hoặc 'OK' để xác nhận, hoặc 'Hủy' để bỏ qua.", type="text", suggestions=["Đồng ý", "OK", "Hủy đặt vé"])
+        step = session_data.get("step", "idle")
+        history = session_data.get("messages", [])
+        search_results = session_data.get("search_results", [])
 
-    if pending_action == "confirm_search":
-        msg_lower = message.lower().strip()
-        if msg_lower in ("ok", "có", "co", "yes", "y", "đồng ý", "tim", "tìm", "oke", "okay"):
-            # User xác nhận → tiến hành search
-            parsed = session.get("pending_data", {})
-            session["pending_action"] = None
-            session["pending_data"] = None
-            return await _execute_flight_search(parsed, session, session_id, message)
-        elif msg_lower in ("hủy", "huy", "no", "k", "không", "ko", "khong", "thôi", "thoi"):
-            session["pending_action"] = None
-            session["pending_data"] = None
-            session["history"].append({"role": "user", "content": message})
-            session["history"].append({"role": "assistant", "content": "👍 Không sao, bạn cần tìm gì thì nói tôi nhé!"})
-            return ChatResponse(reply="👍 Không sao, bạn cần tìm gì thì nói tôi nhé!", type="text")
-        else:
-            session["history"].append({"role": "user", "content": message})
-            session["history"].append({"role": "assistant", "content": "Tôi chưa hiểu ý bạn. Vui lòng gõ 'OK' hoặc 'Có' để xác nhận tìm kiếm, hoặc 'Đổi ngày' / 'Hủy' để thay đổi."})
+        # ── PROCESS MESSAGE BASED ON STATE ────────────────────────────
+
+        # State: search_results — user might be picking a flight number
+        if step == "search_results" and search_results:
+            latest = search_results[-1]
+            formatted = latest.get("formatted", "")
+            raw = latest.get("raw_data", {})
+
+            # Check if user is selecting a flight by number
+            selection = _detect_flight_selection(request.message, raw)
+            if selection is not None:
+                # User selected a flight — start collecting passenger info
+                selected_flight = selection
+                draft = {
+                    "selected_route": selected_flight,
+                    "passengers": [],
+                    "contact": {},
+                    "step": "collecting_passengers",
+                    "error_message": "",
+                }
+                await sessions.save_booking_draft(session_id, draft)
+                await sessions.update_step(session_id, "collecting_passengers")
+
+                # Save messages
+                await sessions.add_message(session_id, "user", request.message)
+                response_text = _build_passenger_prompt(selected_flight)
+                await sessions.add_message(session_id, "assistant", response_text)
+
+                return ChatResponse(
+                    type="text",
+                    content=response_text,
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "collecting_passengers"),
+                    step="collecting_passengers",
+                )
+
+        # State: collecting_passengers — collect passenger details
+        if step == "collecting_passengers":
+            result = await _handle_passenger_collection(session_id, request.message)
+            if result["type"] == "need_more_info":
+                await sessions.add_message(session_id, "user", request.message)
+                await sessions.add_message(session_id, "assistant", result["content"])
+                return ChatResponse(
+                    type="text",
+                    content=result["content"],
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "collecting_passengers"),
+                    step="collecting_passengers",
+                )
+            elif result["type"] == "ready_to_confirm":
+                # All passenger info gathered — show confirmation
+                await sessions.update_step(session_id, "awaiting_confirmation")
+                await sessions.add_message(session_id, "user", request.message)
+                await sessions.add_message(session_id, "assistant", result["content"])
+                return ChatResponse(
+                    type="text",
+                    content=result["content"],
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "awaiting_confirmation"),
+                    step="awaiting_confirmation",
+                )
+            elif result["type"] == "cancelled":
+                await sessions.update_step(session_id, "idle")
+                await sessions.add_message(session_id, "user", request.message)
+                await sessions.add_message(session_id, "assistant", result["content"])
+                return ChatResponse(
+                    type="text",
+                    content=result["content"],
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "idle"),
+                    step="idle",
+                )
+
+        # State: awaiting_confirmation — user confirms or cancels booking
+        if step == "awaiting_confirmation":
+            if _is_confirmation(request.message):
+                # Execute booking!
+                draft = await sessions.get_booking_draft(session_id)
+                await sessions.update_step(session_id, "booking_in_progress")
+                await sessions.add_message(session_id, "user", request.message)
+                booking_result = await _execute_booking(draft)
+                await sessions.update_step(session_id, "booking_result")
+                await sessions.add_message(session_id, "assistant", booking_result["content"])
+
+                # Reset draft
+                await sessions.save_booking_draft(session_id, {
+                    "selected_route": {}, "passengers": [], "contact": {}, "step": "idle", "error_message": "",
+                })
+
+                return ChatResponse(
+                    type="booking_result",
+                    content=booking_result["content"],
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "booking_result"),
+                    step="booking_result",
+                    **({"booking_code": booking_result.get("booking_code")} if booking_result.get("booking_code") else {}),
+                )
+            elif _is_cancellation(request.message):
+                await sessions.update_step(session_id, "idle")
+                await sessions.add_message(session_id, "user", request.message)
+                msg = "Đã hủy đặt vé. Bạn cần tìm chuyến bay khác không? 👇"
+                await sessions.add_message(session_id, "assistant", msg)
+                return ChatResponse(
+                    type="text",
+                    content=msg,
+                    session_id=session_id,
+                    suggestions=_get_suggestions(agent, "idle"),
+                    step="idle",
+                )
+
+        # ── DEFAULT: Send to LLM for processing ──────────────────────
+
+        # Build system prompt
+        system = _build_system_prompt(agent)
+
+        # Get LLM response
+        llm = get_llm()
+        llm_response = await llm.chat(
+            message=request.message,
+            history=history,
+            system_override=system,
+        )
+
+        await sessions.add_message(session_id, "user", request.message)
+
+        # Handle tool calls
+        if llm_response.type == "tool_call":
+            tool_name = llm_response.tool_name
+            tool_args = llm_response.tool_args
+            logger.info("Tool call: %s with args=%s", tool_name, tool_args)
+
+            if tool_name == TOOL_SEARCH_FLIGHT:
+                result = await _execute_search(tool_args)
+                if result.get("success"):
+                    formatted = _format_flight_results(result, tool_args)
+                    # Save search results to session
+                    await sessions.save_search_results(session_id, result, formatted)
+                    await sessions.add_message(session_id, "assistant", formatted)
+
+                    return ChatResponse(
+                        type="text",
+                        content=formatted,
+                        session_id=session_id,
+                        suggestions=_get_suggestions(agent, "search_results"),
+                        step="search_results",
+                    )
+                else:
+                    error_msg = f"Xin lỗi, không tìm thấy chuyến bay phù hợp: {result.get('error', 'Lỗi hệ thống')}"
+                    await sessions.add_message(session_id, "assistant", error_msg)
+                    return ChatResponse(
+                        type="text",
+                        content=error_msg,
+                        session_id=session_id,
+                        suggestions=_get_suggestions(agent, step),
+                        step=step,
+                    )
+
+            elif tool_name == TOOL_BOOK_FLIGHT:
+                # LLM wants to book — but we need to transition to passenger collection
+                # If passenger info is already in args, validate and show confirmation
+                passengers = tool_args.get("passengers", [])
+                if passengers and all(_validate_passenger(p) == [] for p in passengers):
+                    # All info present — show confirmation
+                    draft = {
+                        "selected_route": tool_args,
+                        "passengers": passengers,
+                        "contact": tool_args.get("contact", {}),
+                        "step": "awaiting_confirmation",
+                        "error_message": "",
+                    }
+                    await sessions.save_booking_draft(session_id, draft)
+                    await sessions.update_step(session_id, "awaiting_confirmation")
+                    msg = _build_confirmation_text(draft)
+                    await sessions.add_message(session_id, "assistant", msg)
+                    return ChatResponse(
+                        type="text",
+                        content=msg,
+                        session_id=session_id,
+                        suggestions=_get_suggestions(agent, "awaiting_confirmation"),
+                        step="awaiting_confirmation",
+                    )
+                else:
+                    # Need to collect passenger info
+                    draft = {
+                        "selected_route": tool_args,
+                        "passengers": passengers or [],
+                        "contact": tool_args.get("contact", {}),
+                        "step": "collecting_passengers",
+                        "error_message": "",
+                    }
+                    await sessions.save_booking_draft(session_id, draft)
+                    await sessions.update_step(session_id, "collecting_passengers")
+                    msg = _build_passenger_prompt(tool_args)
+                    await sessions.add_message(session_id, "assistant", msg)
+                    return ChatResponse(
+                        type="text",
+                        content=msg,
+                        session_id=session_id,
+                        suggestions=_get_suggestions(agent, "collecting_passengers"),
+                        step="collecting_passengers",
+                    )
+
+            # Unknown tool
+            msg = f"Tôi chưa hỗ trợ chức năng '{tool_name}' này. Bạn có thể hỏi tìm vé hoặc chính sách hãng nhé."
+            await sessions.add_message(session_id, "assistant", msg)
             return ChatResponse(
-                reply="Tôi chưa hiểu ý bạn. Vui lòng gõ 'OK' hoặc 'Có' để xác nhận tìm kiếm, hoặc 'Đổi ngày' / 'Hủy' để thay đổi.",
                 type="text",
-                suggestions=["OK", "Có", "Đổi ngày", "Hủy"],
+                content=msg,
+                session_id=session_id,
+                suggestions=_get_suggestions(agent, step),
+                step=step,
             )
 
-    # if pending_action == "awaiting_confirm": # Removed (handled by LLM function calling)
-    #     # ... (original awaiting_confirm logic, now removed)
-    #     pass # This block is effectively removed
+        # Text response from LLM
+        if llm_response.type == "error":
+            await sessions.add_message(session_id, "assistant", llm_response.content)
+            return ChatResponse(
+                type="error",
+                content=str(llm_response.content),
+                session_id=session_id,
+                suggestions=_get_suggestions(agent, step),
+                step=step,
+            )
 
-    # ── STEP 1: Parse với intent parser local (nhanh, rẻ) ──────────
-    parsed = parse_flight_search(message)
-    intent_type = classify_intent(message)
-
-    # ── STEP 2: Nếu thiếu thông tin → hỏi lại khách ────────────────
-    # Removed (LLM will use collect_passenger_info or answer_question now)
-
-    # ── STEP 3: Nếu đã đầy đủ → confirm trước khi search ──────────
-    if parsed and intent_type == "search_flight" and "origin" in parsed and "destination" in parsed:
-        session["pending_action"] = "confirm_search"
-        session["pending_data"] = parsed
-
-        origin_name = _reverse_location(parsed["origin"])
-        dest_name = _reverse_location(parsed["destination"])
-        date_str = parsed.get("date", "")
-        try:
-            d = datetime.strptime(date_str, "%d%m%Y")
-            date_display = d.strftime("%d/%m/%Y")
-        except (ValueError, TypeError):
-            date_display = date_str
-
-        adults = parsed.get("adults", 1)
-        confirm_msg = (
-            f"✈️ **Tìm vé: {origin_name} → {dest_name}**\n"
-            f"📅 Ngày: {date_display}\n"
-            f"👤 {adults} người{' lớn' if adults > 0 else ''}"
-            f"{' + ' + str(parsed.get('children', 0)) + ' trẻ em' if parsed.get('children', 0) > 0 else ''}"
-            f"{' + ' + str(parsed.get('infants', 0)) + ' em bé' if parsed.get('infants', 0) > 0 else ''}\n\n"
-            f"✅ **Xác nhận tìm?** (gõ OK / Có)"
-        )
-        session["history"].append({"role": "assistant", "content": confirm_msg})
+        content = str(llm_response.content)
+        await sessions.add_message(session_id, "assistant", content)
         return ChatResponse(
-            reply=confirm_msg,
-            type="confirm",
-            data={"params": parsed},
-            suggestions=["OK", "Có", "Đổi ngày", "Hủy"],
-        )
-
-    # ── STEP 4: Non-search intents — handle locally ─────────────────
-    policy_responses = {
-        "policy_baggage": (
-            "🧳 **Hành lý máy bay — thông tin cơ bản**\n\n"
-            "• **Hành lý xách tay:** 1 kiện ≤7kg, kích thước 56x36x23cm\n"
-            "• **Hành lý ký gửi:** Tùy hãng:\n"
-            "  • Vietnam Airlines: 20-32kg (Bao gồm vé)\n"
-            "  • Vietjet: 0kg (mua thêm từ 7-32kg)\n"
-            "  • Bamboo: 20kg (bao gồm vé Eco)\n"
-            "  • Pacific: 0kg (mua thêm)\n\n"
-            "💡 Bạn muốn biết cụ thể hãng nào không?"
-        ),
-        "policy_change": (
-            "🔄 **Đổi vé — quy định chung**\n\n"
-            "• Nội địa: đổi được trước giờ bay, phí tùy hạng vé\n"
-            "• Quốc tế: tùy điều kiện vé, có thể mất phí 50-100%\n"
-            "• **Vietjet:** Đổi online đến 3h trước giờ bay\n"
-            "• **VNA:** Đổi được đến 1h trước, phí ~150-500K\n\n"
-            "Bạn bay hãng nào? Mình check cụ thể cho!"
-        ),
-        "policy_cancel": (
-            "❌ **Hủy vé — lưu ý**\n\n"
-            "• Vé **không hoàn** (non-refund) là phổ biến nhất\n"
-            "• Một số vé có thể hoàn lại 50-80% thuế phí\n"
-            "• Hủy trước giờ bay: càng sớm càng tốt\n"
-            "• Liên hệ mình để check điều kiện vé cụ thể nhé!"
-        ),
-        "policy_documents": (
-            "📋 **Thủ tục sân bay — những thứ cần mang**\n\n"
-            "• **CMND/CCCD** (bản gốc)\n"
-            "• **Vé máy bay** (in sẵn hoặc bản mềm)\n"
-            "• Trẻ em: giấy khai sinh (bản sao)\n"
-            "• Bay quốc tế: Hộ chiếu + Visa (nếu cần)\n\n"
-            "Check-in online trước 24h để chọn chỗ ngồi nhé!"
-        ),
-        "policy_general": (
-            "📄 **Chính sách chung — cần biết**\n\n"
-            "Tùy mỗi hãng và hạng vé. Bạn muốn check:\n"
-            "• 🧳 **Hành lý** bao nhiêu kg?\n"
-            "• 🔄 **Đổi vé** / hủy vé?\n"
-            "• 📋 **Thủ tục** check-in / giấy tờ?"
-        ),
-    }
-
-    if intent_type in policy_responses:
-        reply = policy_responses[intent_type]
-        session["history"].append({"role": "user", "content": message})
-        session["history"].append({"role": "assistant", "content": reply})
-        return ChatResponse(reply=reply, type="text")
-
-    # ── STEP 5: Chưa parse được → gọi LLM ──────────────────────────
-    logger.info("=== Splashing: calling LLM for session %s, msg='%s' ===", session_id, message[:60])
-
-    # ── Check for follow-up commands (client-side quick actions) ─────
-    cmd_result = _handle_followup_command(message, session)
-    if cmd_result:
-        session["history"].append({"role": "user", "content": message})
-        session["history"].append({"role": "assistant", "content": cmd_result["reply"]})
-        return ChatResponse(**cmd_result)
-
-    session["history"].append({"role": "user", "content": message})
-
-    # ── Inject last search context if available ─────────────────────
-    context = _build_context(session, message)
-    llm = get_llm()
-    result = await llm.chat(
-        message=message,
-        history=session.get("history", []),
-        agent="ticketing",
-        context=context,
-    )
-
-    llm_type = result.get("type", "reply")
-
-    if llm_type == "search":
-        params = result.get("params", {})
-        return await _execute_flight_search(params, session, session_id, message)
-
-    else:
-        # LLM trả lời trực tiếp
-        reply = result.get("content", "Xin lỗi, tôi chưa hiểu ý bạn.")
-        session["history"].append({"role": "assistant", "content": reply})
-        return ChatResponse(reply=reply, type="text")
-
-
-
-async def _handle_passenger_info_collection(message: str, session: dict, session_id: str) -> ChatResponse:
-    """Xử lý luồng thu thập thông tin hành khách."""
-    # Khởi tạo danh sách hành khách nếu chưa có
-    if "passengers_to_book" not in session:
-        session["passengers_to_book"] = []
-        last_search_params = session.get("last_search", {}).get("params", {})
-        num_adults = last_search_params.get("adults", 1)
-        num_children = last_search_params.get("children", 0)
-        num_infants = last_search_params.get("infants", 0)
-
-        for _ in range(num_adults):
-            session["passengers_to_book"].append({"pax_type": "adult", "info": {}})
-        for _ in range(num_children):
-            session["passengers_to_book"].append({"pax_type": "child", "info": {}})
-        for _ in range(num_infants):
-            session["passengers_to_book"].append({"pax_type": "infant", "info": {}})
-
-        session["current_passenger_index"] = 0
-
-    passengers = session["passengers_to_book"]
-    current_idx = session["current_passenger_index"]
-
-    if current_idx >= len(passengers):
-        # Đã thu thập đủ thông tin tất cả hành khách, chuyển sang xác nhận
-        session["pending_action"] = "confirm_booking"
-        return await _confirm_booking(session, session_id)
-
-    current_pax_entry = passengers[current_idx]
-    current_pax_info = current_pax_entry["info"]
-    pax_type = current_pax_entry["pax_type"]
-    pax_type_display = "người lớn" if pax_type == "adult" else ("trẻ em" if pax_type == "child" else "em bé")
-
-    # 1. --- Xử lý input trực tiếp từ người dùng (ảnh hoặc text) ---
-    # Kiểm tra nếu message là URL ảnh (giả định)
-    image_url_match = re.search(r"(http[s]?://\S+\.(?:png|jpg|jpeg|gif))", message, re.IGNORECASE)
-    if image_url_match:
-        image_url = image_url_match.group(0)
-        # TODO: Integrate vision_analyze here. This requires direct tool calling from the agent,
-        # not directly from the FastAPI backend. For now, we will skip image processing.
-        # This part needs to be handled by the outer Hermes agent if it receives an image.
-        reply_msg = "Tôi đã nhận được ảnh. Hiện tại tôi chưa thể tự động trích xuất thông tin từ ảnh Hộ chiếu/CCCD. Vui lòng gõ thông tin hoặc gửi lại theo cú pháp."
-        session["history"].append({"role": "assistant", "content": reply_msg})
-        return ChatResponse(reply=reply_msg, type="text")
-
-    # Parse thông tin từ text người dùng nhập vào
-    parsed_from_message = parse_passenger_details(message)
-    current_pax_info.update(parsed_from_message)
-
-    # 2. --- Gọi LLM để trích xuất thông tin từ tin nhắn hiện tại (và lịch sử) ---
-    llm = get_llm()
-    llm_context = f"Khách hàng đang cung cấp thông tin cho hành khách {current_idx + 1} ({pax_type}). Các thông tin đã có: {json.dumps(current_pax_info, ensure_ascii=False)}. Thu thập các thông tin còn thiếu: họ tên, ngày sinh (DDMMYYYY), giới tính (Nam/Nữ), số điện thoại, email."
-    llm_result = await llm.chat(
-        message=message,
-        history=session.get("history", []),
-        agent="ticketing",
-        context=llm_context,
-    )
-
-    if llm_result and llm_result.get("type") == "collect_pax":
-        collected_info_from_llm = llm_result.get("params", {})
-        current_pax_info.update(collected_info_from_llm)
-
-    # 3. --- Kiểm tra và hỏi thông tin còn thiếu ---
-    # Nếu các trường này không có, tự động điền "phòng vé"
-    current_pax_info.setdefault("full_name", "phòng vé")
-    current_pax_info.setdefault("date_of_birth", "01011990") # Một ngày sinh mặc định
-    current_pax_info.setdefault("gender", "Nam") # Giới tính mặc định
-    current_pax_info.setdefault("email", "phongve@abtrip.vn") # Email mặc định
-
-    missing_fields = []
-    # Chỉ số điện thoại là bắt buộc phải hỏi khách
-    if current_idx == 0 and not current_pax_info.get("phone_number"):
-        missing_fields.append("Số điện thoại")
-
-    if missing_fields:
-        pax_type_display = "người lớn" if pax_type == "adult" else ("trẻ em" if pax_type == "child" else "em bé")
-        reply_msg = f"Vui lòng cho tôi biết {', '.join(missing_fields).lower()} của hành khách {current_idx + 1} ({pax_type_display}).\n\n💡 Bạn có thể nhập theo cú pháp: `0987654321`"
-        suggestions = []
-        if "Số điện thoại" in missing_fields:
-            suggestions.append("0987654321")
-
-        session["history"].append({"role": "assistant", "content": reply_msg})
-        return ChatResponse(
-            reply=reply_msg,
-            type="clarify_pax_info",
-            data={"missing_fields": missing_fields, "pax_index": current_idx, "pax_type": pax_type},
-            suggestions=suggestions,
-        )
-    else:
-        # Đã đủ thông tin cho hành khách hiện tại, chuyển sang hành khách tiếp theo
-        session["current_passenger_index"] += 1
-        # Lưu thông tin liên hệ đầu tiên làm mặc định nếu các hành khách sau thiếu
-        if current_idx == 0:
-            session["contact_info"] = {
-                "phone_number": current_pax_info.get("phone_number"),
-                "email": current_pax_info.get("email"),
-            }
-        else:
-            # Gợi ý dùng thông tin liên hệ của người đầu tiên nếu còn thiếu
-            if not current_pax_info.get("phone_number") and session["contact_info"].get("phone_number"):
-                current_pax_info["phone_number"] = session["contact_info"]["phone_number"]
-            if not current_pax_info.get("email") and session["contact_info"].get("email"):
-                current_pax_info["email"] = session["contact_info"]["email"]
-
-        reply_msg = f"✅ Đã có đủ thông tin cho hành khách {current_idx + 1} ({pax_type_display})."
-        session["history"].append({"role": "assistant", "content": reply_msg})
-        # Gọi lại chính hàm này để xử lý hành khách tiếp theo hoặc chuyển sang xác nhận
-        return await _handle_passenger_info_collection("", session, session_id) # Empty message to re-trigger flow
-
-async def _confirm_booking(session: dict, session_id: str) -> ChatResponse:
-    """Hiển thị tổng hợp thông tin và yêu cầu xác nhận đặt vé."""
-    selected_flight = session.get("selected_flight", {})
-    passengers = session.get("passengers_to_book", [])
-
-    if not selected_flight or not passengers:
-        session["pending_action"] = None
-        return ChatResponse(reply="⚠️ Có lỗi xảy ra, không tìm thấy thông tin chuyến bay hoặc hành khách để đặt vé. Vui lòng thử lại.", type="text")
-
-    summary_msg = f"**✈️ XÁC NHẬN ĐẶT VÉ ABTRIP**\n\n**Chuyến bay:**\n*   {selected_flight['code']} của {selected_flight['airline_name']}\n*   Thời gian: {selected_flight['depart']} → {selected_flight['arrive']}\n*   Giá vé: **{selected_flight['price_str']}**\n\n**Thông tin hành khách:**\n"
-    for i, pax_entry in enumerate(passengers):
-        pax_info = pax_entry["info"]
-        summary_msg += f"*   **Hành khách {i+1} ({pax_entry['pax_type'].capitalize()}):** {pax_info.get('full_name')}, NS: {pax_info.get('date_of_birth')}, GT: {pax_info.get('gender')}\n"
-        if pax_info.get("phone_number") or pax_info.get("email"):
-            summary_msg += f"    SĐT: {pax_info.get('phone_number', 'N/A')}, Email: {pax_info.get('email', 'N/A')}\n"
-
-    total_price = selected_flight['price_raw'] * len(passengers) # Simplified for now
-    summary_msg += f"\n**Tổng tiền dự kiến:** **{total_price:,.0f}₫**\n\n✅ **Xác nhận đặt vé?** (Gõ 'Đồng ý' hoặc 'OK' để hoàn tất)"
-
-    session["history"].append({"role": "assistant", "content": summary_msg})
-    return ChatResponse(
-        reply=summary_msg,
-        type="confirm_booking",
-        data={"flight": selected_flight, "passengers": passengers},
-        suggestions=["Đồng ý", "OK", "Hủy đặt vé", "Sửa thông tin"],
-    )
-
-async def _execute_booking(session: dict, session_id: str) -> ChatResponse:
-    """Thực hiện gọi API đặt vé và xuất vé."""
-    selected_flight = session.get("selected_flight", {})
-    passengers_to_book = session.get("passengers_to_book", [])
-
-    if not selected_flight or not passengers_to_book:
-        session["pending_action"] = None
-        return ChatResponse(reply="⚠️ Không đủ thông tin để đặt vé. Vui lòng thử lại quy trình từ đầu.", type="text")
-
-    # Gọi API BookFlight và IssueTicket từ abtrip_client.py
-    client = get_client()
-    try:
-        # Bước 1: BookFlight
-        book_response = await client.book_flight(
-            session_info=selected_flight.get("session_info"), # Cần đảm bảo session_info có sẵn từ bước chọn chuyến bay
-            flight_option_id=selected_flight.get("flight_option_id"),
-            fare_option_id=selected_flight.get("fare_option_id"),
-            airline_option_id=selected_flight.get("airline_option_id"),
-            passengers=passengers_to_book # Cần format lại passengers cho đúng với API
-        )
-
-        if not book_response or not book_response.get("Success"):
-            error_msg = book_response.get("Message", "Lỗi đặt chỗ không xác định.")
-            return ChatResponse(reply=f"❌ Đặt chỗ không thành công: {error_msg}. Vui lòng thử lại hoặc liên hệ hỗ trợ.", type="text")
-
-        pnr_code = book_response.get("PNR", "")
-        # Bước 2: IssueTicket
-        issue_response = await client.issue_ticket(
-            session_info=selected_flight.get("session_info"),
-            pnr_code=pnr_code,
-            payment_type="DEFAULT" # Tạm thời dùng DEFAULT, có thể mở rộng sau
-        )
-
-        if not issue_response or not issue_response.get("Success"):
-            error_msg = issue_response.get("Message", "Lỗi xuất vé không xác định.")
-            return ChatResponse(reply=f"❌ Xuất vé không thành công: {error_msg}. Vui lòng liên hệ hỗ trợ với mã đặt chỗ: {pnr_code}.", type="text")
-
-        reply_msg = (
-            f"✅ **ĐẶT VÉ VÀ XUẤT VÉ THÀNH CÔNG!**\n\n"
-            f"Mã đặt chỗ (PNR): **{pnr_code}**\n"
-            f"Bạn sẽ nhận được email xác nhận vé điện tử trong ít phút tới.\n\n"
-            f"Chúc bạn có một chuyến đi vui vẻ!"
-        )
-        session["pending_action"] = None
-        session["passengers_to_book"] = [] # Clear passenger info
-        session["selected_flight"] = None # Clear selected flight
-        session["history"].append({"role": "assistant", "content": reply_msg})
-        return ChatResponse(reply=reply_msg, type="booking_success", data={"pnr": pnr_code})
-
-    except Exception as e:
-        logger.error("Lỗi khi thực hiện đặt/xuất vé: %s", e)
-        session["pending_action"] = None
-        return ChatResponse(reply="❌ Có lỗi xảy ra trong quá trình đặt/xuất vé. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.", type="text")
-
-
-# ── Execute flight search (shared between confirm + LLM paths) ─────
-
-async def _execute_flight_search(
-    params: dict,
-    session: dict,
-    session_id: str,
-    original_message: str,
-) -> ChatResponse:
-    """Execute actual flight search and return formatted results."""
-    origin = params.get("origin", "").upper()
-    destination = params.get("destination", "").upper()
-    date = params.get("date", "")
-    adults = params.get("adults", 1)
-    children = params.get("children", 0)
-    infants = params.get("infants", 0)
-
-    # ── Round-trip detection ────────────────────────────────────
-    is_return = params.get("is_return", False)
-    if is_return and session.get("last_search"):
-        last_params = session["last_search"].get("params", {})
-        if not origin and last_params.get("destination"):
-            origin = last_params["destination"]
-        if not destination and last_params.get("origin"):
-            destination = last_params["origin"]
-        params["origin"] = origin
-        params["destination"] = destination
-        if not date and last_params.get("date"):
-            try:
-                d = datetime.strptime(last_params["date"], "%d%m%Y")
-                return_date = d + timedelta(days=3)
-                date = return_date.strftime("%d%m%Y")
-                params["date"] = date
-            except ValueError:
-                pass
-
-    if not origin or not destination:
-        reply = "✈️ Bạn vui lòng cho tôi biết điểm đi, điểm đến và ngày bay nhé!"
-    else:
-        logger.info("Searching flights: %s→%s %s (adults=%s, chd=%s, inf=%s)",
-                    origin, destination, date, adults, children, infants)
-
-        api_result = await _search_flights(params)
-        if api_result.get("Success", False):
-            reply, flights_data = format_flight_results(api_result, params, return_data=True)
-            session["last_search"] = {
-                "params": params,
-                "summary": _summarize_results(api_result, params),
-                "raw": api_result,
-            }
-            session["last_raw_flights"] = api_result.get("ListGroup", [])
-            session["last_structured_flights"] = flights_data # Store the processed flights data
-            session["last_results_count"] = len(flights_data)
-        else:
-            reply = f"❌ Lỗi tra cứu: {api_result.get('Message', 'Không rõ lỗi')}"
-            flights_data = None
-            session["last_search"] = None
-            session["last_raw_flights"] = None
-            session["last_structured_flights"] = None
-
-    session["history"].append({"role": "assistant", "content": reply})
-    suggestions = _get_suggestions(session)
-
-    data = {"params": params, "last_search": session.get("last_search")}
-    if "last_structured_flights" in session:
-        data["flights"] = session["last_structured_flights"]
-
-    return ChatResponse(
-        reply=reply,
-        type="flight_results",
-        data=data,
-        suggestions=suggestions,
-    )
-
-
-async def _handle_flight_selection(
-    message: str,
-    session: dict,
-    session_id: str, # Thêm session_id vào đây
-    selection_type: Literal["index", "code"],
-    selection_value: str | int,
-) -> ChatResponse:
-    """Handle flight selection by index or flight code."""
-    last_structured_flights = session.get("last_structured_flights")
-    if not last_structured_flights:
-        return ChatResponse(
-            reply="⚠️ Chưa có kết quả chuyến bay nào để chọn. Bạn vui lòng tìm kiếm trước nhé!",
             type="text",
-            suggestions=["Tìm chuyến bay"]
+            content=content,
+            session_id=session_id,
+            suggestions=_get_suggestions(agent, step),
+            step=step,
         )
 
-    selected_flight = None
-    if selection_type == "index":
+    except Exception as exc:
+        tb = tb_mod.format_exc()
+        logger.error("Chat error: %s\n%s", exc, tb)
         try:
-            idx = int(selection_value)
-            selected_flight = next((f for f in last_structured_flights if f["index"] == idx), None)
-        except ValueError:
+            await sessions.add_message(
+                request.session_id or "",
+                "assistant",
+                "Xin lỗi, hệ thống đang gặp lỗi. Vui lòng thử lại.",
+            )
+        except Exception:
             pass
-    elif selection_type == "code":
-        code = str(selection_value).upper()
-        selected_flight = next((f for f in last_structured_flights if f["code"].upper() == code), None)
-
-    if not selected_flight:
         return ChatResponse(
-            reply=f"⚠️ Không tìm thấy chuyến bay #{selection_value}. Vui lòng kiểm tra lại số thứ tự hoặc mã chuyến.",
-            type="text",
-            suggestions=["Xem lại chuyến bay", "Tìm chuyến bay khác"]
+            type="error",
+            content="Xin lỗi, hệ thống đang gặp lỗi. Vui lòng thử lại.",
+            session_id=request.session_id or "",
+            suggestions=[],
+            step="idle",
         )
 
-    _AIRLINE_NAMES = {
-        "VN": "Vietnam Airlines", "VJ": "Vietjet Air", "QH": "Bamboo Airways",
-        "BL": "Pacific Airlines", "VU": "Vietravel Airlines",
+
+@router.get("/chat/history/{session_id}")
+async def get_history(session_id: str):
+    """Get chat history for a session."""
+    sessions = get_session_service()
+    messages = await sessions.get_messages(session_id, limit=50)
+    return HistoryResponse(session_id=session_id, messages=messages)
+
+
+@router.get("/agents")
+async def list_agents():
+    """List available agents with metadata."""
+    return {
+        "agents": [
+            {
+                "id": k,
+                "name": v["name"],
+                "icon": v["icon"],
+                "description": v["suggestions"][0] if v["suggestions"] else "",
+                "gradient": {
+                    "ticketing": "from-blue-600 to-blue-800",
+                    "sim": "from-emerald-600 to-emerald-800",
+                    "visa": "from-violet-600 to-violet-800",
+                }.get(k, "from-gray-600 to-gray-800"),
+            }
+            for k, v in AGENT_META.items()
+        ]
     }
-    airline_name = _AIRLINE_NAMES.get(selected_flight["airline"], selected_flight["airline"])
-    reply = (
-        f"✅ Bạn đã chọn chuyến bay **{selected_flight['code']}** của hãng **{airline_name}**\n"
-        f"   Thời gian: {selected_flight['depart']} → {selected_flight['arrive']}\n"
-        f"   Giá vé: **{selected_flight['price_str']}**\n"
-        f"   Tổng cộng {selected_flight['seats']} ghế trống."
-    )
-    # Store selected flight details for later booking steps
-    selected_flight["airline_name"] = airline_name # Add airline_name to selected_flight
-    session["selected_flight"] = selected_flight
-
-    # Chuyển sang trạng thái thu thập thông tin hành khách
-    session["pending_action"] = "awaiting_passenger_info"
-    return await _handle_passenger_info_collection("", session, session_id)
-
-async def _confirm_booking(session: dict, session_id: str) -> ChatResponse:
-    """Hiển thị tổng hợp thông tin và yêu cầu xác nhận đặt vé."""
-    selected_flight = session.get("selected_flight", {})
-    passengers = session.get("passengers_to_book", [])
-    return ChatResponse(
-        reply=reply + "\n\n💡 Vui lòng cung cấp thông tin hành khách để tiếp tục đặt vé.",
-        type="text",
-        suggestions=["Đặt vé ngay", "Hỏi về hành lý"]
-    )
 
 
-async def _handle_smart_service(message: str, session_id: str, session: dict, service: str) -> ChatResponse:
-    """Route to the correct SmartAgent service handler."""
-    session_id_short = session_id[:8] if session_id else "?"
-    logger.info("SmartAgent service [%s]: %s — msg='%s'", session_id_short, service, message[:60])
+# ─── State Helpers ───────────────────────────────────────────────────────────
 
-    if service == "fasttrack":
-        reply = handle_fasttrack(message)
-        response_type = "text"
-        suggestions = ["Fast Track Nội Bài", "Fast Track Tân Sơn Nhất", "Fast Track Đà Nẵng", "Giá"]
-    elif service == "esim":
-        reply = handle_esim(message)
-        response_type = "text"
-        suggestions = ["eSIM Châu Á", "eSIM Châu Âu", "eSIM Toàn cầu", "Giá"]
-    elif service == "visa":
-        reply = handle_visa(message)
-        response_type = "text"
-        suggestions = ["Visa Nhật Bản", "Visa Hàn Quốc", "Visa Schengen", "Visa Mỹ"]
-    elif service == "passport":
-        reply = handle_passport(message)
-        response_type = "text"
-        suggestions = ["Làm hộ chiếu", "Hộ chiếu cấp nhanh", "Chi phí", "Liên hệ"]
-    else:
-        reply = f"Dịch vụ '{service}' chưa được hỗ trợ."
-        response_type = "text"
-        suggestions = []
+def _detect_flight_selection(message: str, search_data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Detect if user is selecting a flight by number or airline+flight code.
+    Returns the selected flight data dict, or None.
+    """
+    msg = message.strip().lower()
 
-    session["history"].append({"role": "user", "content": message})
-    session["history"].append({"role": "assistant", "content": reply})
-    return ChatResponse(reply=reply, type=response_type, suggestions=suggestions)
-
-
-async def _handle_general(message: str, session_id: str, agent: str) -> ChatResponse:
-    """SIM & Visa: gọi LLM thuần chat."""
-    session = _get_session(session_id)
-    session["history"].append({"role": "user", "content": message})
-
-    llm = get_llm()
-    result = await llm.chat(
-        message=message,
-        history=session.get("history", []),
-        agent=agent,
-    )
-    reply = result.get("content", "Xin lỗi, tôi chưa hiểu ý bạn.")
-
-    session["history"].append({"role": "assistant", "content": reply})
-    return ChatResponse(reply=reply, type="text")
-
-
-# ── Build context for LLM ──────────────────────────────────────────
-
-def _build_context(session: dict, message: str) -> str | None:
-    """Build context string from RAG + last search results for the LLM."""
-    parts = []
-
-    # ── RAG knowledge context ──────────────────────────────────
-    try:
-        rag = get_rag()
-        rag_ctx = rag.format_context(message, n_results=2)
-        if rag_ctx:
-            parts.append(rag_ctx)
-    except Exception as e:
-        logger.warning("RAG context error: %s", e)
-
-    # ── Last search context ─────────────────────────────────────
-    last = session.get("last_search")
-    if last:
-        params = last.get("params", {})
-        summary = last.get("summary", "")
-        if summary:
-            origin_name = _AIRPORT_NAMES.get(params.get("origin", ""), params.get("origin", ""))
-            dest_name = _AIRPORT_NAMES.get(params.get("destination", ""), params.get("destination", ""))
-            parts.append(
-                f"[KẾT QUẢ TÌM KIẾM TRƯỚC ĐÓ]\n"
-                f"Tuyến: {origin_name} → {dest_name}\n"
-                f"Ngày: {params.get('date', '?')}\n"
-                f"Số hành khách: {params.get('adults', 1)} người lớn, "
-                f"{params.get('children', 0)} trẻ em, {params.get('infants', 0)} em bé\n"
-                f"Kết quả:\n{summary}\n"
-                f"[HẾT KẾT QUẢ]"
-            )
-
-    if not parts:
+    # Check for cancellation keywords
+    if any(kw in msg for kw in ["hủy", "cancel", "thôi", "không", "khác", "tìm lại"]):
         return None
 
-    ctx = "\n\n".join(parts)
-    ctx += f"\n\nNgười dùng nói: {message}"
-    return ctx
+    # Try to extract a number (flight index)
+    import re
+    num_match = re.search(r'\b(\d+)\b', msg)
+    if num_match:
+        idx = int(num_match.group(1)) - 1  # 0-indexed
+        routes = search_data.get("data", {}).get("ListRoute", [])
+        if routes:
+            flights = routes[0].get("ListFlight", [])
+            if 0 <= idx < len(flights):
+                flight = flights[idx]
+                items = flight.get("ListItem", []) or flight.get("ListAirItem", []) or []
+                if items:
+                    item = items[0]
+                    return {
+                        "session": flight.get("Session", "") or item.get("Session", ""),
+                        "airline": flight.get("Airline", ""),
+                        "flightNumber": flight.get("FlightNumber", "") or flight.get("FlightCode", ""),
+                        "startPoint": routes[0].get("StartPoint", ""),
+                        "endPoint": routes[0].get("EndPoint", ""),
+                        "departDate": routes[0].get("DepartDate", ""),
+                        "departTime": flight.get("StartTime", ""),
+                        "arriveTime": flight.get("EndTime", ""),
+                        "fareClass": item.get("FareClass", ""),
+                        "price": float(item.get("TotalPrice", 0) or item.get("Price", 0)),
+                        "currency": item.get("Currency", "VND"),
+                        "leg": 0,
+                        "ListBaggage": flight.get("ListBaggage", []),
+                        "ListAirportFee": flight.get("ListAirportFee", []),
+                    }
 
-
-def _summarize_results(api_result: dict, params: dict) -> str:
-    """Create a brief summary of flight results for context injection."""
-    groups = api_result.get("ListGroup", [])
-    if not groups:
-        return "Không có chuyến bay nào."
-
-    lines = []
-    cheapest = float("inf")
-    cheapest_flight = ""
-
-    for grp in groups:
-        options = grp.get("ListAirOption", [])
-        for opt in options:
-            airline = opt.get("Airline", "?")
-            flight_code = f"{airline}{opt.get('FlightNumber', '?')}"
-            depart = opt.get("DepartTime", "?")[:5]
-            arrive = opt.get("ArriveTime", "?")[:5]
-            price_str = opt.get("PriceFmt") or opt.get("Price")
-            try:
-                price = float(opt.get("Price", 0) or 0)
-            except (ValueError, TypeError):
-                price = 0
-            if price and price < cheapest:
-                cheapest = price
-                cheapest_flight = flight_code
-
-            lines.append(f"  {flight_code}: {depart}→{arrive} {price_str}₫")
-
-    total = params.get("adults", 1) + params.get("children", 0) + params.get("infants", 0)
-    summary = f"{len(lines)} chuyến bay tìm thấy.\n"
-    summary += "\n".join(lines[:8])  # top 8 to save tokens
-    if len(lines) > 8:
-        summary += f"\n  ... và {len(lines) - 8} chuyến khác"
-    if cheapest < float("inf"):
-        summary += f"\n💰 Rẻ nhất: {cheapest_flight} ({cheapest:,.0f}₫/vé)"
-    summary += f"\n👥 {total} khách"
-    return summary
-
-
-# ── Follow-up commands ─────────────────────────────────────────────
-
-_FOLLOWUP_PATTERNS = {
-    "rẻ nhất": "cheapest",
-    "re nhat": "cheapest",
-    "sớm nhất": "earliest",
-    "som nhat": "earliest",
-    "nhanh nhất": "fastest",
-    "nhanh nhat": "fastest",
-    "bay thẳng": "direct",
-    "bay thang": "direct",
-    "các chuyến": "show_all",
-    "xem tất cả": "show_all",
-    "xem tat ca": "show_all",
-    "xem lịch khác": "other_date",
-    "lich khac": "other_date",
-    "giá": "sort_price",
-    "sắp xếp": "sort_price",
-}
-
-
-def _handle_followup_command(message: str, session: dict) -> dict | None:
-    """Handle quick follow-up commands without going to LLM."""
-    last = session.get("last_search")
-    logger.info("=== FOLLOWUP: has_last=%s, msg='%s' ===",
-                last is not None,
-                message[:60])
-    if not last:
-        return None
-
-    msg_lower = message.lower().strip()
-
-    # Map message to action
-    action = None
-    for pattern, act in _FOLLOWUP_PATTERNS.items():
-        if pattern in msg_lower:
-            action = act
-            break
-
-    if not action:
-        return None
-
-    params = last.get("params", {})
-    raw = last.get("raw", {})
-    groups = raw.get("ListGroup", [])
-
-    if action in ("cheapest", "earliest", "fastest", "direct", "show_all", "sort_price"):
-        if not groups:
-            return None
-
-        all_options = []
-        seen_prices = set()
-        for grp in groups:
-            for opt in grp.get("ListAirOption", []):
-                price = opt.get("Price") or opt.get("TotalPrice") or 0
-                try:
-                    price_f = float(price)
-                except (ValueError, TypeError):
-                    price_f = 0
-                # Airline & FlightNumber can be nested in ListFlightOption[*].ListFlight[*]
-                airline = opt.get("Airline", "") or ""
-                flight_num = opt.get("FlightNumber", "") or ""
-                if not airline or not flight_num:
-                    # Try nested structure (AGT format)
-                    for fo in opt.get("ListFlightOption", []):
-                        for fl in fo.get("ListFlight", []):
-                            airline = fl.get("Airline", "") or airline
-                            flight_num = fl.get("FlightNumber", "") or flight_num
-                            if airline and flight_num:
-                                break
-                        if airline and flight_num:
-                            break
-                key = f"{airline}{flight_num}"
-                if key and key not in seen_prices:
-                    seen_prices.add(key)
-                    all_options.append({**opt, "_price": price_f, "_airline": airline, "_flight_num": flight_num})
-
-        if action == "cheapest":
-            all_options.sort(key=lambda x: x["_price"])
-            filtered = all_options[:1]
-            label = "💸 Chuyến rẻ nhất"
-        elif action == "earliest":
-            all_options.sort(key=lambda x: x.get("DepartTime", "99:99"))
-            filtered = all_options[:1]
-            label = "🌅 Chuyến sớm nhất"
-        elif action == "fastest":
-            all_options.sort(key=lambda x: (
-                int(x.get("DepartTime", "0000")[:2]) * 60 +
-                int(x.get("DepartTime", "0000")[3:5]) -
-                int(x.get("ArriveTime", "0000")[:2]) * 60 -
-                int(x.get("ArriveTime", "0000")[3:5])
-            ))
-            filtered = all_options[:1]
-            label = "🚀 Chuyến nhanh nhất"
-        elif action == "direct":
-            filtered = [o for o in all_options if o.get("StopNum", "0") == "0"]
-            if not filtered:
-                return None
-            label = "✈️ Chuyến bay thẳng"
-        elif action == "show_all":
-            filtered = all_options
-            label = "📋 Tất cả chuyến bay"
-        elif action == "sort_price":
-            all_options.sort(key=lambda x: x["_price"])
-            filtered = all_options
-            label = "💰 Sắp xếp theo giá"
-
-        if not filtered:
-            return None
-
-        # Format filtered results
-        lines = [f"### {label}"]
-        for opt in filtered:
-            airline = opt.get("_airline") or opt.get("Airline", "?")
-            flight_num = opt.get("_flight_num") or opt.get("FlightNumber", "?")
-            flight = f"{airline}{flight_num}"
-            # Get DepartTime/ArriveTime from nested structure if not at top level
-            depart = opt.get("DepartTime", "")
-            arrive = opt.get("ArriveTime", "")
-            if not depart or not arrive:
-                for fo in opt.get("ListFlightOption", []):
-                    for fl in fo.get("ListFlight", []):
-                        full_depart = fl.get("DepartDate", "")
-                        full_arrive = fl.get("ArriveDate", "")
-                        if full_depart:
-                            depart = full_depart.split()[-1] if " " in full_depart else full_depart
-                        if full_arrive:
-                            arrive = full_arrive.split()[-1] if " " in full_arrive else full_arrive
-                        if depart and arrive:
-                            break
-                    if depart and arrive:
-                        break
-            depart = (depart or "??")[:5]
-            arrive = (arrive or "??")[:5]
-            price_fmt = opt.get("PriceFmt", f"{opt.get('_price', 0):,.0f}₫")
-            stop = "" if opt.get("StopNum", "0") == "0" else f" ({opt['StopNum']} stop)"
-            lines.append(f"  {flight}  {depart}→{arrive}  **{price_fmt}**{stop}")
-
-        if action in ("cheapest", "earliest", "fastest", "direct"):
-            lines.append(f"\n👥 {params.get('adults', 1)} người lớn")
-            p = filtered[0].get("_price", 0) * params.get("adults", 1)
-            lines.append(f"💰 Tổng: **{p:,.0f}₫**")
-            lines.append("\n👉 Gõ 'đặt' + mã chuyến để đặt (VD: 'đặt BLBL175')")
-        else:
-            lines.append(f"\n{len(filtered)} chuyến")
-
-        suggestions = ["Chuyến rẻ nhất", "Chuyến sớm nhất", "Đổi ngày bay", "Tìm tuyến khác"]
-
-        return {
-            "reply": "\n".join(lines),
-            "type": "flight_results",
-            "data": {"params": params, "filtered": True},
-            "suggestions": suggestions,
-        }
+    # Try to match airline+flight number pattern (VN230, VJ151, etc.)
+    flight_match = re.search(r'\b([A-Za-z]{2,3})\s*(\d{2,4})\b', msg)
+    if flight_match:
+        airline = flight_match.group(1).upper()
+        flight_num = flight_match.group(2)
+        routes = search_data.get("data", {}).get("ListRoute", [])
+        if routes:
+            flights = routes[0].get("ListFlight", [])
+            for flight in flights:
+                code = (flight.get("FlightNumber", "") or flight.get("FlightCode", "")).strip()
+                fl_airline = flight.get("Airline", "").strip()
+                if fl_airline == airline and code == flight_num:
+                    items = flight.get("ListItem", []) or flight.get("ListAirItem", []) or []
+                    if items:
+                        item = items[0]
+                        return {
+                            "session": flight.get("Session", "") or item.get("Session", ""),
+                            "airline": airline,
+                            "flightNumber": flight_num,
+                            "startPoint": routes[0].get("StartPoint", ""),
+                            "endPoint": routes[0].get("EndPoint", ""),
+                            "departDate": routes[0].get("DepartDate", ""),
+                            "departTime": flight.get("StartTime", ""),
+                            "arriveTime": flight.get("EndTime", ""),
+                            "fareClass": item.get("FareClass", ""),
+                            "price": float(item.get("TotalPrice", 0) or item.get("Price", 0)),
+                            "currency": item.get("Currency", "VND"),
+                            "leg": 0,
+                            "ListBaggage": flight.get("ListBaggage", []),
+                            "ListAirportFee": flight.get("ListAirportFee", []),
+                        }
 
     return None
 
 
-def _get_suggestions(session: dict) -> list[str]:
-    """Get contextual suggestions based on current search state."""
-    last = session.get("last_search")
-    logger.info("=== GET_SUGGESTIONS: last=%s, last_keys=%s", last is not None, list(last.keys()) if last else "N/A")
-    import traceback as _tb
-    if not last:
-        return ["Chuyến rẻ nhất", "Chuyến bay thẳng", "Chuyến sớm nhất", "Xem lịch khác"]
-
-    params = last.get("params", {})
-    suggestions = ["Chuyến rẻ nhất", "Chuyến bay thẳng", "Chuyến sớm nhất"]
-
-    # Add round-trip suggestion if we have a route
-    origin = params.get("origin", "")
-    destination = params.get("destination", "")
-    if origin and destination:
-        dest_name = _AIRPORT_NAMES.get(destination, destination)
-        suggestions.append(f"Về {dest_name}")
-        suggestions.append("Đổi ngày bay")
-
-    return suggestions[:4]  # keep max 4
+def _is_confirmation(message: str) -> bool:
+    """Detect if user is confirming the booking."""
+    msg = message.strip().lower()
+    confirm_words = [
+        "xác nhận", "đồng ý", "đặt", "ok", "oki", "okay",
+        "yes", "yeah", "yep", "chuẩn", "đúng r", "đúng rồi",
+        "làm", "tiến hành", "book", "đi",
+    ]
+    return any(kw in msg for kw in confirm_words)
 
 
-# ── Search flights ─────────────────────────────────────────────────
+def _is_cancellation(message: str) -> bool:
+    """Detect if user wants to cancel the booking process."""
+    msg = message.strip().lower()
+    cancel_words = ["hủy", "cancel", "thôi", "không đặt", "bỏ qua", "quay lại", "tìm lại"]
+    return any(kw in msg for kw in cancel_words)
 
-async def _search_flights(params: dict) -> dict:
-    """Gọi AGT API tìm chuyến bay. Nếu fail → mock data."""
-    origin = params.get("origin", "").upper()
-    dest = params.get("destination", "").upper()
-    date = params.get("date", "")
-    adults = params.get("adults", 1)
-    children = params.get("children", 0)
-    infants = params.get("infants", 0)
 
-    # Try real AGT API first
-    try:
-        client = get_client()
-        routes = [{
-            "Leg": 0,
-            "StartPoint": origin,
-            "EndPoint": dest,
-            "DepartDate": date,
-        }]
-        result = await client.search_flight(
-            system="",
-            adt=adults,
-            chd=children,
-            inf=infants,
-            routes=routes,
-        )
-        # Only use real result if it has actual flight data with prices
-        if result.get("Success") and result.get("ListGroup"):
-            has_real_data = False
-            for grp in result["ListGroup"]:
-                for opt in grp.get("ListAirOption", []):
-                    price = opt.get("Price") or opt.get("TotalPrice")
-                    if price and float(price) > 0:
-                        has_real_data = True
-                        break
-                if has_real_data:
-                    break
-            if has_real_data:
-                return result
-            logger.warning("AGT returned %d groups but all prices are null/0 — falling back to mock",
-                           len(result["ListGroup"]))
-    except Exception as e:
-        logger.warning(f"AGT API failed, using mock: {e}")
+def _build_passenger_prompt(flight: dict[str, Any]) -> str:
+    """Generate prompt asking for passenger information."""
+    route = f"{flight.get('startPoint', '???')} → {flight.get('endPoint', '???')}"
+    flight_str = f"{flight.get('airline', '')}{flight.get('flightNumber', '')}"
+    date_str = flight.get("departDate", "")
+    if len(date_str) == 8:
+        date_str = f"{date_str[:2]}/{date_str[2:4]}/{date_str[4:]}"
+    price = flight.get("price", 0)
+    price_str = f"{price:,.0f}₫" if flight.get("currency", "VND") == "VND" else f"{price:,.0f}"
 
-    # Fallback to mock
-    logger.info(f"Using mock data for {origin}→{dest} on {date}")
-    return generate_mock_result(
-        origin=origin,
-        destination=dest,
-        date=date,
-        adults=adults,
-        children=children,
-        infants=infants,
+    return (
+        f"✈️ **{route}** | {flight_str} | {date_str} | {price_str}/khách\n\n"
+        "Vui lòng cung cấp thông tin hành khách:\n\n"
+        "**Mỗi hành khách cần:**\n"
+        "1. Họ và tên đầy đủ (VD: Nguyễn Văn A)\n"
+        "2. Giới tính (Nam/Nữ)\n"
+        "3. Ngày sinh (DD/MM/YYYY)\n"
+        "4. Số hộ chiếu (nếu có)\n\n"
+        "Bạn có thể gửi theo format:\n"
+        "`Nguyễn Văn A, Nam, 15/08/1990, AB123456`\n\n"
+        "Hoặc đơn giản là gửi từng thông tin một, tôi sẽ hỏi dần 👇"
     )
 
 
-def _reverse_location(code: str) -> str:
-    """Get human-friendly location name from IATA code."""
-    names = {
-        "SGN": "TP.HCM", "HAN": "Hà Nội", "DAD": "Đà Nẵng",
-        "CXR": "Nha Trang", "DLI": "Đà Lạt", "PQC": "Phú Quốc",
-        "HUI": "Huế", "VCS": "Côn Đảo", "VDH": "Đồng Hới",
-        "VII": "Vinh", "DIN": "Điện Biên", "HPH": "Hải Phòng",
-        "VDO": "Vân Đồn", "UIH": "Quy Nhơn", "TBB": "Tuy Hòa",
-        "PXU": "Pleiku", "BMV": "Buôn Ma Thuột", "VCA": "Cần Thơ",
-        "VKG": "Rạch Giá", "VCL": "Chu Lai",
-    }
-    return names.get(code, code)
+def _build_confirmation_text(draft: dict[str, Any]) -> str:
+    """Build booking confirmation summary."""
+    route = draft.get("selected_route", {})
+    passengers = draft.get("passengers", [])
+    contact = draft.get("contact", {})
+
+    route_str = f"{route.get('startPoint', '???')} → {route.get('endPoint', '???')}"
+    flight_str = f"{route.get('airline', '')}{route.get('flightNumber', '')}"
+    date_str = route.get("departDate", "")
+    if len(date_str) == 8:
+        date_str = f"{date_str[:2]}/{date_str[2:4]}/{date_str[4:]}"
+
+    price = route.get("price", 0)
+    price_str = f"{price:,.0f}₫" if route.get("currency", "VND") == "VND" else f"{price:,.0f}"
+    total = price * len(passengers)
+
+    lines = [
+        "📋 **XÁC NHẬN ĐẶT VÉ**",
+        "",
+        f"✈️ {route_str}",
+        f"   Chuyến bay: {flight_str}",
+        f"   Ngày: {date_str}",
+        f"   Giờ: {route.get('departTime', '???')} → {route.get('arriveTime', '???')}",
+        f"   Giá: {price_str}/khách",
+        "",
+        f"**Hành khách ({len(passengers)} người):**",
+    ]
+
+    for i, p in enumerate(passengers, 1):
+        name = f"{p.get('title', '')} {p.get('lastName', '')} {p.get('firstName', '')}".strip()
+        gender = "Nam" if p.get("gender", "").lower() == "male" else "Nữ" if p.get("gender", "").lower() == "female" else p.get("gender", "")
+        dob = str(p.get("birthDate", ""))
+        if len(dob) == 8:
+            dob = f"{dob[:2]}/{dob[2:4]}/{dob[4:]}"
+        lines.append(f"   {i}. {name} | {gender} | {dob}")
+
+    if contact.get("phone"):
+        lines.append(f"\n📞 Liên hệ: {contact.get('fullName', '')} - {contact.get('phone', '')}")
+
+    lines.append(f"\n💰 **Tổng tiền: {total:,.0f}₫**")
+    lines.append("\nGõ **OK** hoặc **Xác nhận** để đặt vé, hoặc **Hủy** để hủy 👇")
+
+    return "\n".join(lines)
+
+
+async def _handle_passenger_collection(session_id: str, message: str) -> dict[str, Any]:
+    """
+    Process passenger info message.
+    Returns:
+      - type="need_more_info": still collecting, ask for more
+      - type="ready_to_confirm": all info gathered, show confirmation
+      - type="cancelled": user cancelled booking process
+    """
+    sessions = get_session_service()
+    draft = await sessions.get_booking_draft(session_id)
+
+    if _is_cancellation(message):
+        return {"type": "cancelled", "content": "Đã hủy quy trình đặt vé. Bạn cần tìm chuyến bay khác không? 👇"}
+
+    passengers = draft.get("passengers", [])
+    selected_route = draft.get("selected_route", {})
+
+    # Try to parse passenger info from the message
+    import re
+
+    # Check if user provided structured passenger info
+    # Format: "Nguyễn Văn A, Nam, 15/08/1990, AB123456" or similar
+
+    # Try multiple passenger format
+    lines = message.strip().split("\n")
+    new_passengers = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Try format: "Name, Gender, DOB, Passport" (comma separated)
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2:
+            # Parse name (first part)
+            full_name = parts[0].strip()
+            # Split into last/first (Vietnamese convention: last is first in list)
+            name_parts = full_name.split()
+            last_name = name_parts[0] if name_parts else ""
+            first_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else full_name
+
+            gender_raw = parts[1].strip().lower()
+            gender = "Male" if gender_raw in ("nam", "male", "m") else "Female"
+
+            # Parse DOB
+            dob = ""
+            if len(parts) >= 3:
+                dob_raw = parts[2].strip()
+                # Try various date formats
+                date_match = re.match(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})', dob_raw)
+                if date_match:
+                    d, m, y = date_match.groups()
+                    dob = f"{d.zfill(2)}{m.zfill(2)}{y}"
+                elif re.match(r'\d{8}', dob_raw):
+                    dob = dob_raw
+
+            passport = parts[3].strip() if len(parts) >= 4 else ""
+
+            title = "Mr" if gender == "Male" else "Ms"
+            pas_type = "adult"
+
+            new_passengers.append({
+                "type": pas_type,
+                "title": title,
+                "lastName": last_name,
+                "firstName": first_name,
+                "gender": gender,
+                "birthDate": dob,
+                "passport": passport,
+                "passportExpDate": "",
+                "nationality": "VN",
+            })
+
+    if new_passengers:
+        # Replace passengers with parsed data
+        draft["passengers"] = new_passengers
+        await sessions.save_booking_draft(session_id, draft)
+
+        # Validate
+        errors = []
+        for p in new_passengers:
+            errors.extend(_validate_passenger(p))
+
+        if errors:
+            return {
+                "type": "need_more_info",
+                "content": f"Có một số thông tin cần bổ sung:\n" + "\n".join(f"- {e}" for e in errors) + "\n\nVui lòng gửi bổ sung nhé 👇",
+            }
+
+        # All good — show confirmation
+        return {"type": "ready_to_confirm", "content": _build_confirmation_text(draft)}
+
+    # No structured data found — LLM can handle this
+    # Send back to LLM for natural language processing
+    return {"type": "need_more_info", "content": "Tôi chưa nhận được thông tin rõ ràng. Bạn vui lòng cung cấp: Họ tên, Giới tính, Ngày sinh (VD: Nguyễn Văn A, Nam, 15/08/1990) 👇"}
+
+
+# ─── Tool Executors ──────────────────────────────────────────────────────────
+
+async def _execute_search(args: dict[str, Any]) -> dict[str, Any]:
+    """Execute flight search through AGT API."""
+    try:
+        client = get_abtrip_client()
+        routes = args.get("routes", [])
+        adt = args.get("adt", 1)
+        chd = args.get("chd", 0)
+        inf = args.get("inf", 0)
+        system = args.get("system", "1")
+
+        if not routes:
+            return {"success": False, "error": "Thiếu thông tin hành trình"}
+
+        result = await client.search_flight(
+            system=system,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+            routes=routes,
+        )
+
+        if result.get("Success") and result.get("ListRoute"):
+            return {"success": True, "data": result}
+        else:
+            error_msg = result.get("Message", "Không có chuyến bay phù hợp")
+            return {"success": False, "error": error_msg}
+
+    except Exception as e:
+        logger.exception("Search flight failed: %s", e)
+        return {"success": False, "error": "Lỗi kết nối hệ thống. Vui lòng thử lại."}
+
+
+async def _execute_booking(draft: dict[str, Any]) -> dict[str, Any]:
+    """Execute BookFlight through AGT API."""
+    try:
+        client = get_abtrip_client()
+        route = draft.get("selected_route", {})
+        passengers = draft.get("passengers", [])
+        contact = draft.get("contact", {})
+
+        if not route or not passengers:
+            return {"type": "error", "content": "Thiếu thông tin đặt vé hoặc hành khách."}
+
+        # Build AGT booking request
+        agt_passengers = []
+        for p in passengers:
+            # AGT expects FullName = LastName + " " + FirstName
+            full_name = f"{p.get('lastName', '')} {p.get('firstName', '')}".strip()
+            ptype = 0 if p.get("type", "adult") == "adult" else (1 if p.get("type") == "child" else 2)
+            agt_passengers.append({
+                "FullName": full_name,
+                "FirstName": p.get("firstName", ""),
+                "LastName": p.get("lastName", ""),
+                "Birthday": p.get("birthDate", ""),
+                "Gender": p.get("gender", "Male"),
+                "PassengerType": ptype,
+                "Passport": p.get("passport", ""),
+                "PassportExpDate": p.get("passportExpDate", ""),
+                "Nationality": p.get("nationality", "VN"),
+            })
+
+        # Build air_options list from route data — each route is one air option
+        air_options = [
+            {
+                "Session": route.get("session", ""),
+                "Airline": route.get("airline", ""),
+                "FlightNumber": route.get("flightNumber", ""),
+                "StartPoint": route.get("startPoint", ""),
+                "EndPoint": route.get("endPoint", ""),
+                "DepartDate": route.get("departDate", ""),
+                "DepartTime": route.get("departTime", ""),
+                "ArriveTime": route.get("arriveTime", ""),
+                "FareClass": route.get("fareClass", ""),
+                "Price": route.get("price", 0),
+                "Currency": route.get("currency", "VND"),
+            }
+        ]
+
+        # Determine system from route or default to "1" (domestic)
+        system = route.get("system", "1")
+
+        # Build guest contact from draft contact info
+        guest_contact = {
+            "FullName": contact.get("fullName", ""),
+            "Phone": contact.get("phone", ""),
+            "Email": contact.get("email", ""),
+            "Address": contact.get("address", ""),
+        }
+
+        booking_result = await client.book_flight(
+            forced=False,
+            system=system,
+            guest_contact=guest_contact,
+            agent_contact=None,
+            passengers=agt_passengers,
+            air_options=air_options,
+            option="",
+            payment=None,
+        )
+
+        if booking_result.get("Success") or booking_result.get("BookingCode"):
+            booking_code = booking_result.get("BookingCode", "") or booking_result.get("OrderCode", "")
+            return {
+                "type": "booking_result",
+                "content": (
+                    f"✅ **ĐẶT VÉ THÀNH CÔNG!**\n\n"
+                    f"Mã đặt chỗ: **{booking_code}**\n"
+                    f"Vui lòng giữ mã này để tra cứu sau.\n\n"
+                    f"Tiếp theo tôi có thể:\n"
+                    f"> - Tra cứu trạng thái vé\n"
+                    f"> - Đặt thêm chuyến khác\n"
+                    f"> - Gọi hỗ trợ"
+                ),
+                "booking_code": booking_code,
+            }
+        else:
+            error_msg = booking_result.get("Message", "Đặt vé thất bại, vui lòng thử lại.")
+            return {
+                "type": "error",
+                "content": f"❌ **ĐẶT VÉ THẤT BẠI**\n\n{error_msg}\n\nVui lòng thử lại hoặc gọi hỗ trợ.",
+            }
+
+    except Exception as e:
+        logger.exception("Booking failed: %s", e)
+        return {
+            "type": "error",
+            "content": "❌ Lỗi hệ thống khi đặt vé. Vui lòng thử lại sau.",
+        }
+
+
+# ─── SSE Streaming Endpoint ───────────────────────────────────────────────────
+
+
+class StreamRequest(BaseModel):
+    agent: str = Field("ticketing", description="ticketing | sim | visa")
+    message: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = None
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: StreamRequest):
+    """SSE streaming endpoint for real-time token-by-token LLM response.
+
+    Returns a Server-Sent Events stream where each event is either:
+      - type: token — a text token from the LLM
+      - type: tool_call — LLM wants to call a tool (includes tool_name + tool_args)
+      - type: done — stream finished, includes full response
+      - type: error — something went wrong
+    """
+    async def event_generator():
+        try:
+            agent = request.agent if request.agent in ("ticketing", "sim", "visa") else "ticketing"
+            sessions = get_session_service()
+
+            # Get or create session
+            session_id = request.session_id or await sessions.create_session(agent)
+            history = await sessions.get_messages(session_id, limit=20)
+
+            # Get LLM response
+            llm = get_llm()
+            llm_response = await llm.chat(
+                message=request.message,
+                history=history,
+            )
+
+            await sessions.add_message(session_id, "user", request.message)
+
+            # Handle tool calls
+            if llm_response.type == "tool_call":
+                tool_name = llm_response.tool_name
+                tool_args = llm_response.tool_args
+
+                # Send tool call event
+                yield f"data: {json.dumps({'type': 'tool_call', 'tool_name': tool_name, 'tool_args': tool_args})}\n\n"
+
+                if tool_name == TOOL_SEARCH_FLIGHT:
+                    result = await _execute_search(tool_args)
+                    if result.get("success"):
+                        formatted = _format_flight_results(result, tool_args)
+                        await sessions.save_search_results(session_id, result, formatted)
+                        await sessions.add_message(session_id, "assistant", formatted)
+                        # Extract structured flight data for frontend cards
+                        routes = result.get("data", {}).get("ListRoute", []) or result.get("ListRoute", [])
+                        flights_data = _parse_flights(routes[0].get("ListFlight", [])) if routes else []
+                        yield f"data: {json.dumps({'type': 'done', 'content': formatted, 'data': flights_data, 'session_id': session_id, 'step': 'search_results'})}\n\n"
+                    else:
+                        error_msg = f"Xin lỗi, không tìm thấy chuyến bay: {result.get('error', 'Lỗi hệ thống')}"
+                        await sessions.add_message(session_id, "assistant", error_msg)
+                        yield f"data: {json.dumps({'type': 'done', 'content': error_msg, 'session_id': session_id, 'step': 'idle'})}\n\n"
+
+                elif tool_name == TOOL_BOOK_FLIGHT:
+                    passengers = tool_args.get("passengers", [])
+                    if passengers and all(_validate_passenger(p) == [] for p in passengers):
+                        draft = {
+                            "selected_route": tool_args,
+                            "passengers": passengers,
+                            "contact": tool_args.get("contact", {}),
+                            "step": "awaiting_confirmation",
+                            "error_message": "",
+                        }
+                        await sessions.save_booking_draft(session_id, draft)
+                        await sessions.update_step(session_id, "awaiting_confirmation")
+                        msg = _build_confirmation_text(draft)
+                        await sessions.add_message(session_id, "assistant", msg)
+                        yield f"data: {json.dumps({'type': 'done', 'content': msg, 'session_id': session_id, 'step': 'awaiting_confirmation'})}\n\n"
+                    else:
+                        draft = {
+                            "selected_route": tool_args,
+                            "passengers": passengers or [],
+                            "contact": tool_args.get("contact", {}),
+                            "step": "collecting_passengers",
+                            "error_message": "",
+                        }
+                        await sessions.save_booking_draft(session_id, draft)
+                        await sessions.update_step(session_id, "collecting_passengers")
+                        msg = _build_passenger_prompt(tool_args)
+                        await sessions.add_message(session_id, "assistant", msg)
+                        passenger_count = tool_args.get("adt", 1) + tool_args.get("chd", 0)
+                        yield f"data: {json.dumps({'type': 'done', 'content': msg, 'data': {'passenger_count': passenger_count}, 'session_id': session_id, 'step': 'collecting_passengers'})}\n\n"
+
+                else:
+                    yield f"data: {json.dumps({'type': 'done', 'content': f'Tool {tool_name} chưa hỗ trợ', 'session_id': session_id})}\n\n"
+
+            elif llm_response.type == "text":
+                content = str(llm_response.content)
+                await sessions.add_message(session_id, "assistant", content)
+                yield f"data: {json.dumps({'type': 'done', 'content': content, 'session_id': session_id, 'step': 'idle'})}\n\n"
+
+            elif llm_response.type == "error":
+                yield f"data: {json.dumps({'type': 'error', 'content': str(llm_response.content), 'session_id': session_id})}\n\n"
+
+        except Exception as exc:
+            tb_mod.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'content': 'Lỗi hệ thống, vui lòng thử lại.'})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
