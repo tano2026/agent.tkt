@@ -1,77 +1,103 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>SmartAgent — Phòng Vé AI</title>
-<!-- Font -->
-<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
-<!-- Phosphor Icons (light style) -->
-<script src="https://unpkg.com/@phosphor-icons/web@2.1.1/src/index.mjs" type="module"></script>
-<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
-<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/light/style.css">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{
-  font-family:'Inter',system-ui,sans-serif;
-  background:#f8f7f4;
-  color:#1a1a1a;
-  min-height:100vh;
+1|<!DOCTYPE html>
+2|<html lang="vi">
+3|<head>
+4|<meta charset="UTF-8">
+5|<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+6|<title>SmartAgent — Phòng Vé AI</title>
+7|<!-- Font -->
+8|<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+9|<!-- Phosphor Icons (light style) -->
+10|<script src="https://unpkg.com/@phosphor-icons/web@2.1.1/src/index.mjs" type="module"></script>
+11|<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+12|<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/light/style.css">
+13|<style>
+14|*{margin:0;padding:0;box-sizing:border-box}
+15|body{
+16|  font-family:'Inter',system-ui,sans-serif;
+17|  background:#f8f7f4;
+18|  color:#1a1a1a;
+19|  min-height:100vh;
+20|  display:flex;
+21|  justify-content:center;
+22|}
+23|
+24|/* ── Suggestions Buttons ── */
+25|.suggestions-box{
+26|  display:flex;
+27|  flex-wrap:wrap;
+28|  gap:8px;
+29|  margin-top:12px;
+30|}
+31|.suggestion-btn{
+32|  background:#e0edff;
+33|  color:#2e6af5;
+34|  border:1px solid #cce0ff;
+35|  border-radius:999px;
+36|  padding:8px 14px;
+37|  font-size:13px;font-weight:500;
+38|  cursor:pointer;
+39|  transition:all .15s;
+40|  white-space:nowrap;
+41|}
+42|.suggestion-btn:hover{background:#d0e3ff;border-color:#b8d6ff}
+43|.suggestion-btn:active{transform:scale(.98)}
+44|
+45|.container{
+46|  width:100%;
+47|  max-width:720px;
+48|  min-height:100vh;
+49|  display:flex;
+50|  flex-direction:column;
+51|  position:relative;
+52|}
+53|
+54|/* ── Header ── */
+55|.header{
+56|  position:sticky;
+57|  top:0;
+58|  z-index:50;
+59|  background:linear-gradient(135deg,#006885,#005570);
+60|  color:white;
+61|  padding:16px 20px 0;
+62|}
+63|.header-top{
+64|  display:flex;
+65|  justify-content:space-between;
+66|  align-items:center;
+67|  margin-bottom:16px;
+68|}
+69|.logo{font-size:20px;font-weight:700;color:white;letter-spacing:-.3px}
+70|.logo-sub{font-weight:400;color:rgba(255,255,255,.7);font-size:14px;margin-left:4px}
+71|.header-actions{display:flex;gap:8px;align-items:center}
+72|.header-actions a{
+73|  text-decoration:none;
+74|  font-size:14px;font-weight:500;
+75|  padding:8px 16px;
+76|  border-radius:999px;
+77|  transition:all .15s;
+78|}
+79|.btn-about{
+80|  background:rgba(255,255,255,.15);
+81|  color:white;
+82|}
+83|.btn-about:hover{background:rgba(255,255,255,.25)}
+84|.btn-book{
+85|  background:#DBA011;
+86|  color:white;
+87|}
+88|.btn-book:hover{background:#c6900f}
+89|
+90|/* ── Quick Action Cards ── */
+91|.quick-cards{
   display:flex;
-  justify-content:center;
+  gap:6px;
+  padding:0 14px 12px;
+  overflow-x:auto;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+  justify-content:space-between; /* Distribute items evenly */
 }
-.container{
-  width:100%;
-  max-width:720px;
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-  position:relative;
-}
-
-/* ── Header ── */
-.header{
-  position:sticky;
-  top:0;
-  z-index:50;
-  background:#f8f7f4;
-  padding:16px 20px 0;
-}
-.header-top{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:16px;
-}
-.logo{font-size:20px;font-weight:700;color:#1a1a1a;letter-spacing:-.3px}
-.logo-sub{font-weight:400;color:#9ca3af;font-size:14px;margin-left:4px}
-.header-actions{display:flex;gap:8px;align-items:center}
-.header-actions a{
-  text-decoration:none;
-  font-size:14px;font-weight:500;
-  padding:8px 16px;
-  border-radius:999px;
-  transition:all .15s;
-}
-.btn-about{
-  background:#f0efed;
-  color:#4b5563;
-}
-.btn-about:hover{background:#e5e4e2}
-.btn-book{
-  background:#1a1a1a;
-  color:white;
-}
-.btn-book:hover{background:#333}
-
-/* ── Quick Action Cards ── */
-.quick-cards{
-  display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:8px;
-  padding:0 20px 16px;
-}
-.qcard{
+99|.qcard{
   display:flex;
   flex-direction:column;
   align-items:center;
@@ -79,408 +105,653 @@ body{
   background:white;
   border:1px solid #f0efed;
   border-radius:16px;
-  padding:12px 4px 10px;
+  padding:8px 2px; /* already compact */
+  flex-shrink:0;
+  scroll-snap-align:start;
+  width:calc((100% - 24px) / 5); /* Keep original width for 5 items */
   cursor:pointer;
   transition:all .15s;
   position:relative;
+  min-width: 80px; /* Ensure minimum width for scrolling */
 }
-.qcard:hover{
-  box-shadow:0 2px 12px rgba(0,0,0,.06);
-  border-color:#e0dedb;
-}
-.qcard:active{transform:scale(.96)}
-.qcard-icon{
-  width:40px;height:40px;
-  border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:20px;
-}
-.qcard-label{
-  font-size:11px;font-weight:500;color:#4b5563;
-  text-align:center;line-height:1.2;
-}
-.qcard-badge{
-  position:absolute;top:-4px;right:-4px;
-  background:#fbbf24;color:#1a1a1a;
-  font-size:9px;font-weight:700;
-  padding:2px 6px;border-radius:999px;
-  line-height:1.2;
-}
-.qcard-icon.blue{background:#e8f4fd;color:#2563eb}
-.qcard-icon.yellow{background:#fef3c7;color:#d97706}
-.qcard-icon.green{background:#d1fae5;color:#059669}
-.qcard-icon.purple{background:#ede9fe;color:#7c3aed}
-.qcard-icon.pink{background:#fce7f3;color:#db2777}
-
-/* ── Chat ── */
-.chat-area{
-  flex:1;
-  overflow-y:auto;
-  padding:0 20px 120px;
-  display:flex;
-  flex-direction:column;
-  gap:12px;
-}
-.chat-area::-webkit-scrollbar{width:4px}
-.chat-area::-webkit-scrollbar-thumb{background:#ddd;border-radius:4px}
-
-/* Message */
-.msg-row{
-  display:flex;
-  align-items:flex-end;
-  gap:8px;
-  animation:fadeIn .2s ease-out;
-}
-@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-
-.msg-row.user{justify-content:flex-end}
-.msg-row.bot{justify-content:flex-start}
-
-.avatar{
-  width:32px;height:32px;
-  border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;font-weight:700;
-  flex-shrink:0;
-}
-.avatar.user{background:#1a1a1a;color:white;order:2}
-.avatar.bot{background:#d9a74a;color:white}
-
-.bubble{
-  max-width:82%;
-  padding:12px 16px;
-  border-radius:18px;
-  font-size:14px;
-  line-height:1.6;
-  word-wrap:break-word;
-  white-space:pre-wrap;
-}
-.bubble.user{
-  background:#1a1a1a;
-  color:white;
-  border-radius:18px 18px 4px 18px;
-}
-.bubble.bot{
-  background:white;
-  color:#1a1a1a;
-  border:1px solid #f0efed;
-  border-radius:18px 18px 18px 4px;
-  box-shadow:0 1px 4px rgba(0,0,0,.04);
-}
-.bubble.bot pre{white-space:pre;overflow-x:auto;font-size:12px;background:#f8f7f4;padding:8px 10px;border-radius:8px;margin:4px 0}
-
-/* ── Flight Cards ── */
-.flight-cards{display:flex;flex-direction:column;gap:6px;margin:4px 0}
-.flight-card{
-  display:flex;justify-content:space-between;align-items:center;
-  padding:10px 14px;
-  background:#fafaf9;
-  border:1px solid #f0efed;
-  border-radius:10px;
-  transition:all .15s;
-  cursor:pointer;
-}
-.flight-card:hover{border-color:#d9a74a;background:#fdfcf9}
-.flight-card.cheapest{border-color:#d9a74a;background:#fffcf2}
-.flight-card.cheapest .fc-left{border-left:3px solid #d9a74a;padding-left:8px}
-.fc-left{display:flex;flex-direction:column;gap:2px}
-.fc-code{font-size:14px;font-weight:600;color:#1a1a1a}
-.fc-time{font-size:12px;color:#6b7280}
-.fc-dur{font-size:11px;color:#9ca3af}
-.fc-right{text-align:right;display:flex;flex-direction:column;gap:2px;align-items:flex-end}
-.fc-price{font-size:15px;font-weight:700;color:#1a1a1a}
-.fc-price.cheapest{color:#b8860b}
-.fc-badge{
-  font-size:10px;font-weight:600;color:#b8860b;
-  background:rgba(184,134,11,.1);
-  padding:2px 6px;border-radius:4px;
-  white-space:nowrap;
-}
-.fc-footer{
-  text-align:center;
-  font-size:12px;color:#6b7280;
-  padding:6px 0 2px;
-}
-.bubble ul{
-  list-style:disc;
-  padding-left:20px;
-  margin:6px 0;
-  space-y:4px;
-}
-.bubble li{margin-bottom:4px}
-.bubble .note{
-  color:#9ca3af;
-  font-style:italic;
-  font-size:13px;
-  margin-top:10px;
-}
-.bubble .strong{font-weight:600}
-.bubble .emoji{font-size:16px;margin-right:4px}
-
-/* ── Input Bar ── */
-.input-bar{
-  position:fixed;
-  bottom:0;left:50%;
-  transform:translateX(-50%);
-  width:100%;
-  max-width:720px;
-  padding:12px 20px;
-  background:linear-gradient(to top,#f8f7f4 60%,transparent);
-}
-.input-inner{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  background:white;
-  border:1px solid #e5e4e2;
-  border-radius:999px;
-  padding:4px 4px 4px 18px;
-  box-shadow:0 2px 12px rgba(0,0,0,.06);
-  transition:border-color .15s;
-}
-.input-inner:focus-within{border-color:#1a1a1a}
-.input-inner input{
-  flex:1;
-  border:none;
-  outline:none;
-  font-size:14px;
-  font-family:'Inter',system-ui,sans-serif;
-  background:transparent;
-  color:#1a1a1a;
-  padding:10px 0;
-}
-.input-inner input::placeholder{color:#9ca3af}
-.send-btn{
-  width:42px;height:42px;
-  background:#1a1a1a;
-  border:none;
-  border-radius:50%;
-  color:white;
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;
-  transition:all .15s;
-  font-size:18px;
-}
-.send-btn:hover{background:#333}
-.send-btn:active{transform:scale(.92)}
-
-/* ── Loading ── */
-.loading-dots{display:inline-flex;gap:4px;padding:4px 0}
-.loading-dots span{
-  width:7px;height:7px;
-  background:#9ca3af;
-  border-radius:50%;
-  animation:bounce 1.2s infinite;
-}
-.loading-dots span:nth-child(2){animation-delay:.2s}
-.loading-dots span:nth-child(3){animation-delay:.4s}
-@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
-
-/* Responsive */
-@media(max-width:480px){
-  .qcard{padding:8px 2px 8px}
-  .qcard-icon{width:34px;height:34px;font-size:16px}
-  .qcard-label{font-size:10px}
+118|.qcard:active{transform:scale(.96)}
+119|.qcard-icon{
+120|  width:40px;height:40px;
+121|  border-radius:12px;
+122|  display:flex;align-items:center;justify-content:center;
+123|  font-size:20px;
+124|}
+125|.qcard-label{
+126|  font-size:10px;font-weight:500;color:#4b5563;
+127|  text-align:center;line-height:1.2;
+128|}
+129|.qcard-badge{
+130|  position:absolute;top:-4px;right:-4px;
+131|  background:#fbbf24;color:#1a1a1a;
+132|  font-size:9px;font-weight:700;
+133|  padding:2px 6px;border-radius:999px;
+134|  line-height:1.2;
+135|}
+136|.qcard-icon.blue{background:#e8f4fd;color:#2563eb}
+137|.qcard-icon.yellow{background:#fef3c7;color:#d97706}
+138|.qcard-icon.green{background:#d1fae5;color:#059669}
+139|.qcard-icon.purple{background:#ede9fe;color:#7c3aed}
+140|.qcard-icon.pink{background:#fce7f3;color:#db2777}
+141|
+142|/* ── Chat ── */
+143|.chat-area{
+144|  flex:1;
+145|  overflow-y:auto;
+146|  padding:0 20px 120px;
+147|  display:flex;
+148|  flex-direction:column;
+149|  gap:12px;
+150|}
+151|.chat-area::-webkit-scrollbar{width:4px}
+152|.chat-area::-webkit-scrollbar-thumb{background:#ddd;border-radius:4px}
+153|
+154|/* Message */
+155|.msg-row{
+156|  display:flex;
+157|  align-items:flex-end;
+158|  gap:8px;
+159|  animation:fadeIn .2s ease-out;
+160|}
+161|@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+162|
+163|.msg-row.user{justify-content:flex-end}
+164|.msg-row.bot{justify-content:flex-start}
+165|
+166|.avatar{
+167|  width:32px;height:32px;
+168|  border-radius:50%;
+169|  display:flex;align-items:center;justify-content:center;
+170|  font-size:13px;font-weight:700;
+171|  flex-shrink:0;
+172|}
+173|.avatar.user{background:#1B3A6B;color:white;order:2}
+174|.avatar.bot{background:#DBA011;color:white}
+175|
+176|.bubble{
+177|  max-width:82%;
+178|  padding:12px 16px;
+179|  border-radius:18px;
+180|  font-size:14px;
+181|  line-height:1.6;
+182|  word-wrap:break-word;
+183|  white-space:pre-wrap;
+184|}
+185|.bubble.user{
+186|  background:#1B3A6B;
+187|  color:white;
+188|  border-radius:18px 18px 4px 18px;
+189|}
+190|.bubble.bot{
+191|  background:white;
+192|  color:#1a1a1a;
+193|  border:1px solid #f0efed;
+194|  border-radius:18px 18px 18px 4px;
+195|  box-shadow:0 1px 4px rgba(0,0,0,.04);
+196|}
+197|.bubble.bot pre{white-space:pre;overflow-x:auto;font-family:'SF Mono',Consolas,'Courier New',monospace;font-size:12px;line-height:1.7;background:#f8f7f4;padding:10px 12px;border-radius:8px;margin:4px 0}
+198|.bubble.wide{max-width:98%}
+199|
+200|/* ── Copyable code block ── */
+201|.code-wrap{position:relative;margin:6px 0}
+202|.code-wrap pre{margin:0;padding-right:74px}
+203|.copy-btn{
+204|  position:absolute;top:8px;right:8px;
+205|  display:flex;align-items:center;gap:4px;
+206|  background:#fff;border:1px solid #e5e4e2;
+207|  border-radius:6px;padding:5px 9px;
+208|  font-size:10px;font-weight:500;color:#4b5563;
+209|  cursor:pointer;transition:all .15s;
+210|  box-shadow:0 1px 3px rgba(0,0,0,.06);
+211|}
+212|.copy-btn:hover{background:#f8f7f4;border-color:#DBA011;color:#B8860B}
+213|.copy-btn:active{transform:scale(.95)}
+214|.copy-btn i{font-size:13px}
+215|
+216|/* ── Flight Cards ── */
+217|.flight-cards{display:flex;flex-direction:column;gap:6px;margin:4px 0}
+218|.flight-card{
+219|  display:flex;justify-content:space-between;align-items:center;
+220|  padding:10px 14px;
+221|  background:#fafaf9;
+222|  border:1px solid #f0efed;
+223|  border-radius:10px;
+224|  transition:all .15s;
+225|  cursor:pointer;
+226|}
+227|.flight-card:hover{border-color:#DBA011;background:#fdfcf9}
+228|.flight-card.cheapest{border-color:#DBA011;background:#fffcf2}
+229|.flight-card.cheapest .fc-left{border-left:3px solid #DBA011;padding-left:8px}
+230|.fc-left{display:flex;flex-direction:column;gap:2px}
+231|.fc-code{font-size:14px;font-weight:600;color:#1a1a1a}
+232|.fc-time{font-size:12px;color:#6b7280}
+233|.fc-dur{font-size:11px;color:#9ca3af}
+234|.fc-right{text-align:right;display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+235|.fc-price{font-size:15px;font-weight:700;color:#1a1a1a}
+236|.fc-price.cheapest{color:#B8860B}
+237|.fc-badge{
+238|  font-size:10px;font-weight:600;color:#b8860b;
+239|  background:rgba(184,134,11,.1);
+240|  padding:2px 6px;border-radius:4px;
+241|  white-space:nowrap;
+242|}
+243|.fc-footer{
+244|  text-align:center;
+245|  font-size:12px;color:#6b7280;
+246|  padding:6px 0 2px;
+247|}
+248|.fc-book-btn{
+249|  margin-top:4px;
+250|  padding:6px 16px;
+251|  border:none;border-radius:999px;
+252|  background:#006885;color:#fff;
+253|  font-size:13px;font-weight:600;
+254|  font-family:'Inter',system-ui,sans-serif;
+255|  cursor:pointer;transition:all .15s;
+256|  white-space:nowrap;
+257|}
+258|.fc-book-btn:hover{background:#005570}
+259|.fc-book-btn:active{transform:scale(.94)}
+260|.flight-card.cheapest .fc-book-btn{background:#DBA011}
+261|.flight-card.cheapest .fc-book-btn:hover{background:#c6900f}
+262|.bubble ul{
+263|  list-style:disc;
+264|  padding-left:20px;
+265|  margin:6px 0;
+266|  space-y:4px;
+267|}
+268|.bubble li{margin-bottom:4px}
+269|.bubble .note{
+270|  color:#9ca3af;
+271|  font-style:italic;
+272|  font-size:13px;
+273|  margin-top:10px;
+274|}
+275|.bubble .strong{font-weight:600}
+276|.bubble .emoji{font-size:16px;margin-right:4px}
+277|
+278|/* ── Input Bar ── */
+279|.input-bar{
+280|  position:fixed;
+281|  bottom:0;left:50%;
+282|  transform:translateX(-50%);
+283|  width:100%;
+284|  max-width:720px;
+285|  padding:12px 20px;
+286|  background:linear-gradient(to top,#f8f7f4 60%,transparent);
+287|}
+288|.input-inner{
+289|  display:flex;
+290|  align-items:center;
+291|  gap:8px;
+292|  background:white;
+293|  border:1px solid #e5e4e2;
+294|  border-radius:999px;
+295|  padding:4px 4px 4px 18px;
+296|  box-shadow:0 2px 12px rgba(0,0,0,.06);
+297|  transition:border-color .15s;
+298|}
+299|.input-inner:focus-within{border-color:#006885}
+300|.input-inner input{
+301|  flex:1;
+302|  border:none;
+303|  outline:none;
+304|  font-size:14px;
+305|  font-family:'Inter',system-ui,sans-serif;
+306|  background:transparent;
+307|  color:#1a1a1a;
+308|  padding:10px 0;
+309|}
+310|.input-inner input::placeholder{color:#9ca3af}
+311|.send-btn{
+312|  width:42px;height:42px;
+313|  background:#006885;
+314|  border:none;
+315|  border-radius:50%;
+316|  color:white;
+317|  display:flex;align-items:center;justify-content:center;
+318|  cursor:pointer;
+319|  transition:all .15s;
+320|  font-size:18px;
+321|}
+322|.send-btn:hover{background:#005570}
+323|.send-btn:active{transform:scale(.92)}
+324|
+325|/* ── Loading ── */
+326|.loading-dots{display:inline-flex;gap:4px;padding:4px 0}
+327|.loading-dots span{
+328|  width:7px;height:7px;
+329|  background:#9ca3af;
+330|  border-radius:50%;
+331|  animation:bounce 1.2s infinite;
+332|}
+333|.loading-dots span:nth-child(2){animation-delay:.2s}
+334|.loading-dots span:nth-child(3){animation-delay:.4s}
+335|@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+336|
+337|/* Responsive */
+338|@media(max-width:480px){
+  .qcard{width:calc((100% - 18px) / 4); /* 4 items + 3 gaps of 6px */}
+.qcard-icon{width:34px;height:34px;font-size:16px}
+.qcard-label{font-size:10px}
   .bubble{max-width:88%;font-size:13px}
   .header{padding:12px 14px 0}
   .quick-cards{padding:0 14px 12px}
   .chat-area{padding:0 14px 100px}
   .input-bar{padding:10px 14px}
 }
-</style>
-</head>
-<body>
-
-<div class="container" id="app">
-  <!-- Header -->
-  <header class="header">
-    <div class="header-top">
-      <div class="logo">SmartAgent <span class="logo-sub">— Phòng Vé AI</span></div>
-      <div class="header-actions">
-        <a href="#" class="btn-about">Giới thiệu</a>
-        <a href="#" class="btn-book">Đặt ngay</a>
-      </div>
-    </div>
-  </header>
-
-  <!-- Quick Cards -->
-  <div class="quick-cards">
-    <div class="qcard" onclick="sendQuick('vé máy bay')">
-      <div class="qcard-icon blue">✈️</div>
-      <div class="qcard-label">Vé máy bay</div>
-    </div>
-    <div class="qcard" onclick="sendQuick('fast track Nội Bài')">
-      <div class="qcard-icon yellow">⚡</div>
-      <span class="qcard-badge">24/7</span>
-      <div class="qcard-label">Fast Track</div>
-    </div>
-    <div class="qcard" onclick="sendQuick('eSIM')">
-      <div class="qcard-icon green">📶</div>
-      <div class="qcard-label">eSIM</div>
-    </div>
-    <div class="qcard" onclick="sendQuick('visa')">
-      <div class="qcard-icon purple">🛂</div>
-      <div class="qcard-label">Visa</div>
-    </div>
-    <div class="qcard" onclick="sendQuick('hộ chiếu')">
-      <div class="qcard-icon pink">📄</div>
-      <div class="qcard-label">Hộ chiếu</div>
-    </div>
-  </div>
-
-  <!-- Chat Area -->
-  <div class="chat-area" id="chat"></div>
-
-  <!-- Input Bar -->
-  <div class="input-bar">
-    <div class="input-inner">
-      <input id="input" placeholder="Nhập câu hỏi..." onkeydown="if(event.key==='Enter')sendMsg()">
-      <button class="send-btn" onclick="sendMsg()">➤</button>
-    </div>
-  </div>
-</div>
-
-<script>
-const API = 'http://100.64.173.75/api/chat';
-let sessionId = 's' + Date.now() + Math.random().toString(36).slice(2, 8);
-let pending = false;
-const chat = document.getElementById('chat');
-const input = document.getElementById('input');
-
-function scrollBottom(){
-  requestAnimationFrame(()=>{chat.scrollTop = chat.scrollHeight});
+340|.qcard-icon{width:34px;height:34px;font-size:16px}
+341|.qcard-label{font-size:10px}
+342|  .bubble{max-width:88%;font-size:13px}
+343|  .header{padding:12px 14px 0}
+344|  .quick-cards{
+  display:flex;
+  gap:6px;
+  padding:0 14px 12px;
+  overflow-x:auto;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+  justify-content:space-between; /* Distribute items evenly */
 }
-
-function addMsg(text, role){
-  const row = document.createElement('div');
-  row.className = 'msg-row ' + role;
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar ' + role;
-  avatar.textContent = role === 'user' ? 'T' : 'S';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble ' + role;
-  bubble.textContent = text;
-  row.appendChild(avatar);
-  row.appendChild(bubble);
-  chat.appendChild(row);
-  scrollBottom();
-  return bubble;
-}
-
-function addBotBubble(html){
-  const row = document.createElement('div');
-  row.className = 'msg-row bot';
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar bot';
-  avatar.textContent = 'S';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble bot';
-  bubble.innerHTML = html;
-  row.appendChild(avatar);
-  row.appendChild(bubble);
-  chat.appendChild(row);
-  scrollBottom();
-}
-
-/* ── Flight Card Renderer ── */
-function renderFlightCards(flights){
-  const codeToAirline = {'BL':'Bamboo','VJ':'VietJet','QH':'Bamboo','VU':'Vietravel','VN':'Vietnam Airlines'};
-  const cheapest = Math.min(...flights.map(f => f.price));
-  let html = '<div class="flight-cards">';
-  flights.forEach(f => {
-    const isCheapest = f.price === cheapest;
-    const color = f.airline === 'BL' ? '#52b960' : f.airline === 'VJ' ? '#e74c3c' : f.airline === 'QH' ? '#2ecc71' : f.airline === 'VU' ? '#e67e22' : '#3498db';
-    html += '<div class="flight-card' + (isCheapest ? ' cheapest' : '') + '">';
-    html += '<div class="fc-left" style="--accent:' + color + '">';
-    html += '<span class="fc-code">' + f.code + '</span>';
-    html += '<span class="fc-time">' + f.depart + ' → ' + f.arrive + '</span>';
-    if(f.duration_h) html += '<span class="fc-dur">' + f.duration_h + 'h</span>';
-    html += '</div>';
-    html += '<div class="fc-right">';
-    html += '<span class="fc-price' + (isCheapest ? ' cheapest' : '') + '">' + f.price_str + '</span>';
-    if(isCheapest) html += '<span class="fc-badge">Rẻ nhất</span>';
-    html += '</div>';
-    html += '</div>';
-  });
-  html += '</div>';
-  html += '<div class="fc-footer">💰 Rẻ nhất <strong>' + flights.find(f => f.cheapest).price_str + '</strong></div>';
-  return html;
-}
-
-function showTyping(){
-  const row = document.createElement('div');
-  row.className = 'msg-row bot';
-  row.id = 'typing';
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar bot';
-  avatar.textContent = 'S';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble bot';
-  bubble.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
-  row.appendChild(avatar);
-  row.appendChild(bubble);
-  chat.appendChild(row);
-  scrollBottom();
-}
-
-function hideTyping(){
-  const el = document.getElementById('typing');
-  if(el) el.remove();
-}
-
-// Format bot reply: simple markdown-like to HTML
-function formatReply(text){
-  // Bold **text**
-  text = text.replace(/\*\*(.+?)\*\*/g, '<span class="strong">$1</span>');
-  // Bullet points at line start
-  text = text.replace(/^• (.+)$/gm, '<li>$1</li>');
-  text = text.replace(/(<li>.*?<\/li>(\n|$))+/g, '<ul>$&</ul>');
-  // Italic *text*
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  // Line breaks
-  text = text.replace(/\n/g, '<br>');
-  // Fix nested: ul needs proper wrapping
-  text = text.replace(/<ul><br>/g, '<ul>');
-  text = text.replace(/<br><\/ul>/g, '</ul>');
-  return text;
-}
-
-async function sendMsg(){
-  const msg = input.value.trim();
-  if(!msg || pending) return;
-  input.value = '';
-  addMsg(msg, 'user');
-  pending = true;
-  showTyping();
-  try{
-    const r = await fetch(API, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:msg, session_id:sessionId})
-    });
-    const d = await r.json();
-    hideTyping();
-    if(d.reply){
-      if(d.type === 'flight_results' && d.data && d.data.flights){
-        addBotBubble(renderFlightCards(d.data.flights));
-      } else {
-        addBotBubble(formatReply(d.reply));
-      }
-    }
-    if(d.type === 'confirm'){
-      setTimeout(() => sendMsg('OK'), 500);
-    }
-  }catch(e){
-    hideTyping();
-    addBotBubble('❌ Lỗi kết nối: ' + e.message);
-  }
-  pending = false;
-}
-
-function sendQuick(topic){
-  input.value = topic;
-  sendMsg();
-}
-</script>
-</body>
-</html>
+345|  .chat-area{padding:0 14px 100px}
+346|  .input-bar{padding:10px 14px}
+347|}
+348|</style>
+349|</head>
+350|<body>
+351|
+352|<div class="container" id="app">
+353|  <!-- Header -->
+354|  <header class="header">
+355|
+356|  </header>
+357|
+358|  <!-- Quick Cards -->
+359|  <div class="quick-cards">
+360|    <div class="qcard" onclick="sendQuick('vé máy bay')">
+361|      <div class="qcard-icon blue">✈️</div>
+362|      <div class="qcard-label">Vé máy bay</div>
+363|    </div>
+364|    <div class="qcard" onclick="sendQuick('fast track Nội Bài')">
+365|      <div class="qcard-icon yellow">⚡</div>
+366|      <span class="qcard-badge">24/7</span>
+367|      <div class="qcard-label">Fast Track</div>
+368|    </div>
+369|    <div class="qcard" onclick="sendQuick('eSIM')">
+370|      <div class="qcard-icon green">📶</div>
+371|      <div class="qcard-label">eSIM</div>
+372|    </div>
+373|    <div class="qcard" onclick="sendQuick('visa')">
+374|      <div class="qcard-icon purple">🛂</div>
+375|      <div class="qcard-label">Visa</div>
+376|    </div>
+377|    <div class="qcard" onclick="sendQuick('hộ chiếu')">
+378|      <div class="qcard-icon pink">📄</div>
+379|      <div class="qcard-label">Hộ chiếu</div>
+380|    </div>
+381|  </div>
+382|
+383|  <!-- Chat Area -->
+384|  <div class="chat-area" id="chat"></div>
+385|
+386|  <!-- Input Bar -->
+387|  <div class="input-bar">
+388|    <div class="input-inner">
+389|      <input id="input" placeholder="Nhập câu hỏi..." onkeydown="if(event.key==='Enter')sendMsg()">
+390|      <button class="send-btn" onclick="sendMsg()">➤</button>
+391|    </div>
+392|  </div>
+393|</div>
+394|
+395|<script>
+396|const API = '/api/chat';
+397|let sessionId = 's' + Date.now() + Math.random().toString(36).slice(2, 8);
+398|let pending = false;
+399|const chat = document.getElementById('chat');
+400|const input = document.getElementById('input');
+401|
+402|function scrollBottom(){
+403|  requestAnimationFrame(()=>{chat.scrollTop = chat.scrollHeight});
+404|}
+405|
+406|function addMsg(text, role){
+407|  const row = document.createElement('div');
+408|  row.className = 'msg-row ' + role;
+409|  const avatar = document.createElement('div');
+410|  avatar.className = 'avatar ' + role;
+411|  avatar.textContent = role === 'user' ? 'T' : 'S';
+412|  const bubble = document.createElement('div');
+413|  bubble.className = 'bubble ' + role;
+414|  bubble.textContent = text;
+415|  row.appendChild(avatar);
+416|  row.appendChild(bubble);
+417|  chat.appendChild(row);
+418|  scrollBottom();
+419|  return bubble;
+420|}
+421|
+422|function addBotBubble(html, suggestions = []){
+423|  const row = document.createElement('div');
+424|  row.className = 'msg-row bot';
+425|  const avatar = document.createElement('div');
+426|  avatar.className = 'avatar bot';
+427|  avatar.textContent = 'S';
+428|  const bubble = document.createElement('div');
+429|  // Widen the bubble when it contains a table/code block so columns don't wrap
+430|  bubble.className = 'bubble bot' + (html.includes('code-wrap') || (suggestions && suggestions.length > 0) ? ' wide' : '');
+431|  bubble.innerHTML = html;
+432|  row.appendChild(avatar);
+433|  row.appendChild(bubble);
+434|
+435|  // Add suggestions if available
+436|  if (suggestions && suggestions.length > 0) {
+437|    const suggestionsDiv = document.createElement('div');
+438|    suggestionsDiv.className = 'suggestions-box';
+439|    suggestions.forEach(suggestion => {
+440|      const btn = document.createElement('button');
+441|      btn.className = 'suggestion-btn';
+442|      btn.textContent = suggestion;
+443|      btn.onclick = () => sendQuick(suggestion);
+444|      suggestionsDiv.appendChild(btn);
+445|    });
+446|    bubble.appendChild(suggestionsDiv); // Add suggestions inside the bubble
+447|  }
+448|
+449|  chat.appendChild(row);
+450|  scrollBottom();
+451|}
+452|
+453|/* ── Flight Card Renderer: 1 chuyến = 1 dòng, nút "Đặt" ngay trong dòng ── */
+454|function renderFlightCards(flights, suggestions = []){
+455|  const cheapest = Math.min(...flights.map(f => f.price));
+456|  let html = '<div class="flight-cards">';
+457|  flights.forEach(f => {
+458|    const isCheapest = f.price === cheapest;
+459|    const color = f.airline === 'BL' ? '#52b960' : f.airline === 'VJ' ? '#e74c3c' : f.airline === 'QH' ? '#2ecc71' : f.airline === 'VU' ? '#e67e22' : '#3498db';
+460|    html += '<div class="flight-card' + (isCheapest ? ' cheapest' : '') + '">';
+461|    html += '<div class="fc-left" style="--accent:' + color + '">';
+462|    html += '<span class="fc-code">[' + f.index + '] ' + f.code + '</span>';
+463|    html += '<span class="fc-time">' + f.depart + ' → ' + f.arrive + '</span>';
+464|    if(f.duration_h) html += '<span class="fc-dur">' + f.duration_h + 'h</span>';
+465|    html += '</div>';
+466|    html += '<div class="fc-right">';
+467|    html += '<span class="fc-price' + (isCheapest ? ' cheapest' : '') + '">' + f.price_str + '</span>';
+468|    if(isCheapest) html += '<span class="fc-badge">Rẻ nhất</span>';
+469|    html += '<button class="fc-book-btn" onclick="sendQuick(\'chọn ' + f.index + '\')">Đặt</button>';
+470|    html += '</div>';
+471|    html += '</div>';
+472|  });
+473|  html += '</div>';
+474|  return html;
+475|}
+476|
+477|function showTyping(){
+478|  const row = document.createElement('div');
+479|  row.className = 'msg-row bot';
+480|  row.id = 'typing';
+481|  const avatar = document.createElement('div');
+482|  avatar.className = 'avatar bot';
+483|  avatar.textContent = 'S';
+484|  const bubble = document.createElement('div');
+485|  bubble.className = 'bubble bot';
+486|  bubble.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+487|  row.appendChild(avatar);
+488|  row.appendChild(bubble);
+489|  chat.appendChild(row);
+490|  scrollBottom();
+491|}
+492|
+493|function hideTyping(){
+494|  const el = document.getElementById('typing');
+495|  if(el) el.remove();
+496|}
+497|
+498|// Format bot reply: simple markdown-like to HTML
+499|let copyBoxCounter = 0;
+500|function formatReply(text){
+501|  // Extract ```code blocks``` first → render as copyable box, protect from further processing
+502|  const codeBlocks = [];
+503|  text = text.replace(/```([\s\S]*?)```/g, (m, code) => {
+504|    const id = 'cb' + (copyBoxCounter++);
+505|    codeBlocks.push({id, code: code.replace(/^\n/, '').replace(/\n$/, '')});
+506|    return '\u0001' + id + '\u0001';
+507|  });
+508|
+509|  // Bold **text**
+510|  text = text.replace(/\*\*(.+?)\*\*/g, '<span class="strong">$1</span>');
+511|  // Bullet points at line start
+512|  text = text.replace(/^• (.+)$/gm, '<li>$1</li>');
+513|  text = text.replace(/(<li>.*?<\/li>(\n|$))+/g, '<ul>$&</ul>');
+514|  // Italic *text*
+515|  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+516|  // Line breaks
+517|  text = text.replace(/\n/g, '<br>');
+518|  // Fix nested: ul needs proper wrapping
+519|  text = text.replace(/<ul><br>/g, '<ul>');
+520|  text = text.replace(/<br><\/ul>/g, '</ul>');
+521|
+522|  // Re-insert code blocks as copyable boxes
+523|  codeBlocks.forEach(({id, code}) => {
+524|    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+525|    const box = '<div class="code-wrap">'
+526|      + '<button class="copy-btn" onclick="copyCodeBox(this,\'' + id + '\')"><i class="ph ph-copy"></i>Copy</button>'
+527|      + '<pre id="' + id + '">' + escaped + '</pre>'
+528|      + '</div>';
+529|    text = text.replace('\u0001' + id + '\u0001', box);
+530|  });
+531|
+532|  return text;
+533|}
+534|
+535|function copyCodeBox(btn, id){
+536|  const el = document.getElementById(id);
+537|  navigator.clipboard.writeText(el.textContent).then(() => {
+538|    btn.textContent = 'Copied!';
+539|    setTimeout(() => { btn.innerHTML = '<i class="ph ph-copy"></i>Copy'; }, 2000);
+540|  }).catch(err => {
+541|    console.error('Failed to copy: ', err);
+542|    btn.textContent = 'Error!';
+543|  });
+544|}
+545|
+546|async function sendMsg() {
+547|  const msg = input.value.trim();
+548|  if (!msg || pending) return;
+549|
+550|  input.value = '';
+551|  addMsg(msg, 'user');
+552|  pending = true;
+553|  showTyping();
+554|
+555|  try {
+556|    const response = await fetch(API, {
+557|      method: 'POST',
+558|      headers: { 'Content-Type': 'application/json' },
+559|      body: JSON.stringify({ message: msg, session_id: sessionId })
+560|    });
+561|    const data = await response.json();
+562|
+563|    if (!response.ok) {
+564|      addBotBubble('⚠️ Lỗi: ' + (data.detail || 'Có lỗi xảy ra, vui lòng thử lại.'));
+565|    } else {
+566|      let replyHtml = formatReply(data.reply);
+567|      if (data.type === 'flight_results' && data.data && data.data.flights) {
+568|        replyHtml = formatReply(data.reply.split('\n\n')[0] + '\n\n') + renderFlightCards(data.data.flights, data.suggestions);
+569|      }
+570|      addBotBubble(replyHtml, data.suggestions);
+571|    }
+572|  } catch (error) {
+573|    console.error('Fetch error:', error);
+574|    addBotBubble('⚠️ Lỗi kết nối, vui lòng thử lại.');
+575|  } finally {
+576|    hideTyping();
+577|    pending = false;
+578|  }
+579|}
+580|
+581|function sendQuick(msg) {
+582|  input.value = msg;
+583|  sendMsg();
+584|}
+585|
+586|// Initial message
+587|window.onload = () => {
+588|  addBotBubble(
+589|    'Chào bạn! Tôi là trợ lý đặt vé máy bay của ABTrip. Tôi có thể giúp bạn tìm vé, canh giá, hoặc tư vấn về các dịch vụ hàng không khác.\n\n' +
+590|    'Bạn muốn đi đâu hôm nay?'
+591|  );
+592|};
+593|
+594|function renderFlightCards(flights){
+595|  const cheapest = Math.min(...flights.map(f => f.price));
+596|  let html = '<div class="flight-cards">';
+597|  flights.forEach(f => {
+598|    const isCheapest = f.price === cheapest;
+599|    const color = f.airline === 'BL' ? '#52b960' : f.airline === 'VJ' ? '#e74c3c' : f.airline === 'QH' ? '#2ecc71' : f.airline === 'VU' ? '#e67e22' : '#3498db';
+600|    html += '<div class="flight-card' + (isCheapest ? ' cheapest' : '') + '">';
+601|    html += '<div class="fc-left" style="--accent:' + color + '">';
+602|    html += '<span class="fc-code">[' + f.index + '] ' + f.code + '</span>';
+603|    html += '<span class="fc-time">' + f.depart + ' → ' + f.arrive + '</span>';
+604|    if(f.duration_h) html += '<span class="fc-dur">' + f.duration_h + 'h</span>';
+605|    html += '</div>';
+606|    html += '<div class="fc-right">';
+607|    html += '<span class="fc-price' + (isCheapest ? ' cheapest' : '') + '">' + f.price_str + '</span>';
+608|    if(isCheapest) html += '<span class="fc-badge">Rẻ nhất</span>';
+609|    html += '<button class="fc-book-btn" onclick="sendQuick(\'chọn ' + f.index + '\')">Đặt</button>';
+610|    html += '</div>';
+611|    html += '</div>';
+612|  });
+613|  html += '</div>';
+614|  return html;
+615|}
+616|
+617|function showTyping(){
+618|  const row = document.createElement('div');
+619|  row.className = 'msg-row bot';
+620|  row.id = 'typing';
+621|  const avatar = document.createElement('div');
+622|  avatar.className = 'avatar bot';
+623|  avatar.textContent = 'S';
+624|  const bubble = document.createElement('div');
+625|  bubble.className = 'bubble bot';
+626|  bubble.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+627|  row.appendChild(avatar);
+628|  row.appendChild(bubble);
+629|  chat.appendChild(row);
+630|  scrollBottom();
+631|}
+632|
+633|function hideTyping(){
+634|  const el = document.getElementById('typing');
+635|  if(el) el.remove();
+636|}
+637|
+638|// Format bot reply: simple markdown-like to HTML
+639|let copyBoxCounter = 0;
+640|function formatReply(text){
+641|  // Extract ```code blocks``` first → render as copyable box, protect from further processing
+642|  const codeBlocks = [];
+643|  text = text.replace(/```([\s\S]*?)```/g, (m, code) => {
+644|    const id = 'cb' + (copyBoxCounter++);
+645|    codeBlocks.push({id, code: code.replace(/^\n/, '').replace(/\n$/, '')});
+646|    return '\u0001' + id + '\u0001';
+647|  });
+648|
+649|  // Bold **text**
+650|  text = text.replace(/\*\*(.+?)\*\*/g, '<span class="strong">$1</span>');
+651|  // Bullet points at line start
+652|  text = text.replace(/^• (.+)$/gm, '<li>$1</li>');
+653|  text = text.replace(/(<li>.*?<\/li>(\n|$))+/g, '<ul>$&</ul>');
+654|  // Italic *text*
+655|  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+656|  // Line breaks
+657|  text = text.replace(/\n/g, '<br>');
+658|  // Fix nested: ul needs proper wrapping
+659|  text = text.replace(/<ul><br>/g, '<ul>');
+660|  text = text.replace(/<br><\/ul>/g, '</ul>');
+661|
+662|  // Re-insert code blocks as copyable boxes
+663|  codeBlocks.forEach(({id, code}) => {
+664|    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+665|    const box = '<div class="code-wrap">'
+666|      + '<button class="copy-btn" onclick="copyCodeBox(this,\'' + id + '\')"><i class="ph ph-copy"></i>Copy</button>'
+667|      + '<pre id="' + id + '">' + escaped + '</pre>'
+668|      + '</div>';
+669|    text = text.replace('\u0001' + id + '\u0001', box);
+670|  });
+671|
+672|  return text;
+673|}
+674|
+675|function copyCodeBox(btn, id){
+676|  const el = document.getElementById(id);
+677|  if(!el) return;
+678|  const text = el.textContent;
+679|  navigator.clipboard.writeText(text).then(() => {
+680|    const orig = btn.innerHTML;
+681|    btn.innerHTML = '<i class="ph ph-check"></i>Đã copy';
+682|    setTimeout(() => { btn.innerHTML = orig; }, 1500);
+683|  }).catch(() => {
+684|    // Fallback for older browsers
+685|    const ta = document.createElement('textarea');
+686|    ta.value = text;
+687|    document.body.appendChild(ta);
+688|    ta.select();
+689|    document.execCommand('copy');
+690|    document.body.removeChild(ta);
+691|    const orig = btn.innerHTML;
+692|    btn.innerHTML = '<i class="ph ph-check"></i>Đã copy';
+693|    setTimeout(() => { btn.innerHTML = orig; }, 1500);
+694|  });
+695|}
+696|
+697|async function sendMsg(){
+698|  const msg = input.value.trim();
+699|  if(!msg || pending) return;
+700|  input.value = '';
+701|  addMsg(msg, 'user');
+702|  pending = true;
+703|  showTyping();
+704|  try{
+705|    const r = await fetch(API, {
+706|      method:'POST',
+707|      headers:{'Content-Type':'application/json'},
+708|      body:JSON.stringify({message:msg, session_id:sessionId})
+709|    });
+710|    const d = await r.json();
+711|    hideTyping();
+712|    if(d.reply){
+713|      let html;
+714|      if(d.type === 'flight_results' && d.data && d.data.flights && d.data.flights.length){
+715|        // Bỏ bảng ASCII trong ``` — thay bằng card mỗi chuyến 1 dòng kèm nút "Đặt" ngay cạnh
+716|        const withoutTable = d.reply.split(/```[\s\S]*?```/);
+717|        const headerText = withoutTable[0] || '';
+718|        const footerText = withoutTable[1] || '';
+719|        html = formatReply(headerText) + renderFlightCards(d.data.flights) + formatReply(footerText);
+720|      } else {
+721|        html = formatReply(d.reply);
+722|      }
+723|      addBotBubble(html);
+724|    }
+725|    if(d.type === 'confirm'){
+726|      setTimeout(() => sendMsg('OK'), 500);
+727|    }
+728|  }catch(e){
+729|    hideTyping();
+730|    addBotBubble('❌ Lỗi kết nối: ' + e.message);
+731|  }
+732|  pending = false;
+733|}
+734|
+735|function sendQuick(topic){
+736|  input.value = topic;
+737|  sendMsg();
+738|}
+739|</script>
+740|</body>
+741|</html>
+742|

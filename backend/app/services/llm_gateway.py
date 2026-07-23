@@ -58,22 +58,80 @@ def _parse_json(raw: str) -> dict[str, Any] | None:
     return None
 
 
+# ── Function Calling Tools ──────────────────────────────────────────────────
+
+_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_flight",
+            "description": "Tìm chuyến bay nội địa Việt Nam. Gọi khi người dùng muốn tìm vé máy bay.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "origin": {"type": "string", "description": "Mã sân bay đi (SGN=TP.HCM, HAN=Hà Nội, DAD=Đà Nẵng, ...)"},
+                    "destination": {"type": "string", "description": "Mã sân bay đến"},
+                    "date": {"type": "string", "description": "Ngày bay định dạng DDMMYYYY (vd: 25072026)"},
+                    "adults": {"type": "integer", "description": "Số người lớn", "default": 1},
+                    "children": {"type": "integer", "description": "Số trẻ em (2-11 tuổi)", "default": 0},
+                    "infants": {"type": "integer", "description": "Số em bé (dưới 2 tuổi)", "default": 0},
+                },
+                "required": ["origin", "destination", "date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "answer_question",
+            "description": "Trả lời câu hỏi chung của người dùng (chính sách, hành lý, thủ tục, giá, ...). KHÔNG dùng để tìm vé.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reply": {"type": "string", "description": "Câu trả lời bằng tiếng Việt, thân thiện và hữu ích"},
+                },
+                "required": ["reply"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "collect_passenger_info",
+            "description": "Thu thập thông tin chi tiết hành khách để đặt vé. Gọi khi người dùng đã chọn chuyến bay và bot cần thông tin hành khách (tên, ngày sinh, giới tính, số điện thoại, email).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "full_name": {"type": "string", "description": "Họ tên đầy đủ của hành khách"},
+                    "date_of_birth": {"type": "string", "description": "Ngày sinh định dạng DDMMYYYY (vd: 01051984)"},
+                    "gender": {"type": "string", "description": "Giới tính: Nam, Nữ"},
+                    "phone_number": {"type": "string", "description": "Số điện thoại liên hệ"},
+                    "email": {"type": "string", "description": "Email liên hệ"},
+                    "pax_type": {"type": "string", "enum": ["adult", "child", "infant"], "description": "Loại hành khách: adult, child, infant"},
+                    "pax_index": {"type": "integer", "description": "Chỉ số của hành khách trong danh sách (bắt đầu từ 0)"},
+                },
+                "required": [],
+            },
+        },
+    },
+]
+
 # ── System prompt ────────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """Bạn là trợ lý đặt vé máy bay ABTrip. Nhiệm vụ của bạn là giúp khách hàng tìm kiếm thông tin và đặt vé.
+_SYSTEM_PROMPT = """Bạn là trợ lý đặt vé máy bay ABTrip. Giúp khách hàng tìm vé và trả lời thông tin.
 
-QUAN TRỌNG: Đôi khi bạn sẽ nhận được [THÔNG TIN TRA CỨU] từ hệ thống. 
-- Đây là kiến thức tra cứu từ cơ sở dữ liệu hàng không — hãy dùng nó để trả lời chính xác.
-- Nếu câu hỏi của khách về chính sách (hành lý, đổi vé, hủy vé, giấy tờ...), hãy ưu tiên dùng thông tin từ [THÔNG TIN TRA CỨU].
-- Nếu không có thông tin phù hợp trong [THÔNG TIN TRA CỨU], hãy trả lời dựa trên kiến thức chung.
+QUAN TRỌNG: Bạn có 3 CÔNG CỤ để sử dụng:
+1. **search_flight** — khi khách muốn tìm vé máy bay. Cần origin, destination, date.
+2. **answer_question** — khi khách hỏi thông tin chung (hành lý, đổi vé, thủ tục, giá...).  
+3. **collect_passenger_info** — khi khách đã chọn chuyến bay và bot cần thu thập thông tin hành khách (tên, ngày sinh, giới tính, số điện thoại, email).
 
-QUY TẮC QUAN TRỌNG:
-1. Luôn phải trả về JSON. Không được trả về text thuần.
-2. JSON format: {"reply": "câu trả lời", "type": "text"}
-3. Nếu người dùng muốn tìm chuyến bay → trả về {"type": "search_flight", "params": {"origin": "...", "destination": "...", "date": "YYYY-MM-DD", "adults": 1, "children": 0, "infants": 0}}
-4. Nếu người dùng hỏi thông tin chung → trả về {"type": "reply", "reply": "câu trả lời"}
-5. Mã sân bay: SGN (TP.HCM), HAN (Hà Nội), DAD (Đà Nẵng), CXR (Nha Trang), HUI (Huế), PQC (Phú Quốc), VII (Vinh), DIN (Điện Biên), VCS (Côn Đảo), TBB (Tuy Hòa), UIH (Quy Nhơn), CAH (Cà Mau), VKG (Rạch Giá), NYA (Nakasongola/đừng dùng)
-6. Nếu thiếu thông tin → trả về {"type": "clarify", "reply": "câu hỏi", "missing": ["origin"]}"""
+Nếu có [THÔNG TIN TRA CỨU] — đó là kiến thức từ cơ sở dữ liệu, hãy dùng nó để trả lời.
+
+Khi cần thông tin hành khách, hãy gợi ý khách nhập theo cú pháp: `NGUYEN VAN A / Nam / 15-10-1995 / 0987654321 / a@gmail.com` hoặc gửi ảnh Hộ chiếu/CCCD để trích xuất tự động.
+
+Mã sân bay: SGN (TP.HCM), HAN (Hà Nội), DAD (Đà Nẵng), CXR (Nha Trang), HUI (Huế), PQC (Phú Quốc), VII (Vinh), DIN (Điện Biên), VCS (Côn Đảo), TBB (Tuy Hòa), UIH (Quy Nhơn), VKG (Rạch Giá), HPH (Hải Phòng), BMV (Buôn Ma Thuột).
+
+LUÔN DÙNG CÔNG CỤ — không trả lời text thuần nếu có công cụ phù hợp."""
 
 
 # ── Gateway class ─────────────────────────────────────────────────────────────
@@ -237,15 +295,16 @@ class LLMGateway:
         messages: list[dict[str, str]],
         use_opus: bool,
     ) -> dict[str, Any] | None:
-        """Call HHTech API with dual-tier model selection."""
+        """Call HHTech API with dual-tier model selection + function calling tools."""
         model = self._opus_model if use_opus else self._sonnet_model
 
-        # Build HHTech-compatible payload
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": 2048,
             "temperature": 0.3,
+            "tools": _TOOLS,
+            "tool_choice": "auto",
         }
 
         try:
@@ -262,11 +321,7 @@ class LLMGateway:
                 return None
 
             data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if not content:
-                return None
-
-            return _parse_json(content)
+            return self._parse_response_message(data)
         except httpx.TimeoutException:
             logger.warning("HHTech %s timed out", model)
             return None
@@ -277,7 +332,7 @@ class LLMGateway:
         self,
         messages: list[dict[str, str]],
     ) -> dict[str, Any] | None:
-        """Call OmniRoute (OpenRouter-compatible) API."""
+        """Call OmniRoute (OpenRouter-compatible) API with function calling."""
         # Convert system message to user message for models that don't support system
         clean = []
         sys_text = ""
@@ -289,11 +344,13 @@ class LLMGateway:
         if sys_text and clean:
             clean[0]["content"] = sys_text + "\n---\n" + clean[0]["content"]
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._omni_model,
             "messages": clean,
             "max_tokens": 1024,
             "temperature": 0.3,
+            "tools": _TOOLS,
+            "tool_choice": "auto",
         }
 
         try:
@@ -310,11 +367,7 @@ class LLMGateway:
                 return None
 
             data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if not content:
-                return None
-
-            return _parse_json(content)
+            return self._parse_response_message(data)
         except httpx.TimeoutException:
             logger.warning("OmniRoute timed out")
             return None
@@ -372,6 +425,69 @@ class LLMGateway:
         if params and params.get("origin") and params.get("destination"):
             return {"type": "search_flight", "params": params}
         return {"type": "reply", "reply": "Xin lỗi, hiện tại hệ thống đang bảo trì. Vui lòng thử lại sau."}
+
+    # ── Response Parser ─────────────────────────────────────────────────────────
+
+    def _parse_response_message(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Parse API response — prefer tool_calls, fall back to JSON content.
+
+        Function calling (tool_calls):
+            Returns {"type": "tool_call", "name": "...", "arguments": {...}}
+
+        JSON fallback (traditional):
+            Returns parsed JSON from content text (backward compat).
+        """
+        message = data.get("choices", [{}])[0].get("message", {})
+        if not message:
+            return None
+
+        # ── FUNCTION CALLING PATH ──────────────────────────────────
+        tool_calls = message.get("tool_calls", [])
+        if tool_calls:
+            tc = tool_calls[0]
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            try:
+                arguments = json.loads(func.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Failed to parse tool arguments: %s", func.get("arguments", "")[:100])
+                return None
+
+            logger.info("Tool call: %s(%s)", name, {k: str(v)[:40] for k, v in arguments.items()})
+
+            # Map function calls to our internal format
+            if name == "search_flight":
+                return {"type": "search", "params": arguments}
+            elif name == "answer_question":
+                return {"type": "reply", "content": arguments.get("reply", "")}
+            elif name == "collect_passenger_info":
+                return {"type": "collect_pax", "params": arguments}
+            else:
+                logger.warning("Unknown tool call: %s", name)
+                return None
+
+        # ── JSON FALLBACK PATH ─────────────────────────────────────
+        content = message.get("content", "")
+        if not content:
+            return None
+
+        parsed = _parse_json(content)
+        if parsed:
+            # Convert old JSON format to new internal format
+            old_type = parsed.get("type", "reply")
+            if old_type == "search_flight":
+                return {"type": "search", "params": parsed.get("params", {})}
+            elif old_type == "clarify":
+                return {
+                    "type": "clarify",
+                    "content": parsed.get("reply", ""),
+                    "missing": parsed.get("missing", []),
+                }
+            else:
+                return {"type": "reply", "content": parsed.get("reply", parsed.get("content", content))}
+
+        # Raw text as reply (last resort)
+        return {"type": "reply", "content": content}
 
     # ── Message Builder ──────────────────────────────────────────────────────
 

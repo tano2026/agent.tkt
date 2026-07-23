@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -25,8 +26,7 @@ from app.services.abtrip_client import get_client
 from app.services.flight_formatter import format_flight_results
 from app.services.mock_flights import generate_mock_result
 from app.services.intent_parser import (
-    parse_flight_search, check_missing_info, generate_clarify_question,
-    _LOCATION_SLANG, classify_intent, classify_service,
+    parse_flight_search, _LOCATION_SLANG, classify_intent, classify_service, parse_passenger_details,
 )
 from app.services.smart_fasttrack import handle_fasttrack
 from app.services.smart_esim import handle_esim
@@ -34,6 +34,7 @@ from app.services.smart_visa import handle_visa
 from app.services.smart_passport import handle_passport
 from app.services.rag_knowledge import get_rag
 from app.services.conversation_memory import get_memory
+from app.services.flight_watcher import get_flight_watcher
 
 logger = logging.getLogger(__name__)
 
@@ -114,11 +115,17 @@ async def chat(body: ChatRequest) -> ChatResponse:
     logger.info("Chat [%s] %s: %s", session_id[:8], agent, message[:80])
 
     if agent == "ticketing":
-        return await _handle_ticketing(message, session_id)
+        result = await _handle_ticketing(message, session_id)
+        _flush_session(session_id)
+        return result
     elif agent == "sim":
-        return await _handle_general(message, session_id, "sim")
+        result = await _handle_general(message, session_id, "sim")
+        _flush_session(session_id)
+        return result
     elif agent == "visa":
-        return await _handle_general(message, session_id, "visa")
+        result = await _handle_general(message, session_id, "visa")
+        _flush_session(session_id)
+        return result
     else:
         return ChatResponse(reply=f"Agent '{agent}' chưa được hỗ trợ.")
 
@@ -129,12 +136,47 @@ async def _handle_ticketing(message: str, session_id: str) -> ChatResponse:
 
     # ── STEP 0: SmartAgent Service Router (only if no pending action) ──
     pending_action = session.get("pending_action")
+    
+    # Check for flight selection command
+    select_match = re.search(r"^(chọn|chon|dat|đặt)\s+(\d+|[a-zA-Z]{1,2}[0-9a-zA-Z]{1,5})", message, re.IGNORECASE)
+    if select_match and session.get("last_structured_flights"):
+        command = select_match.group(1).lower()
+        value = select_match.group(2)
+        
+        if value.isdigit():
+            return await _handle_flight_selection(message, session, session_id, "index", int(value))
+        else:
+            # If it's not a digit, assume it's a flight code like BL360
+            return await _handle_flight_selection(message, session, session_id, "code", value)
+
     if not pending_action:
         service = classify_service(message)
         if service != "flight":
             return await _handle_smart_service(message, session_id, session, service)
 
-    # ── STEP 1: Kiểm tra nếu đang trong trạng thái chờ confirm ─────────
+    # ── STEP 1: Kiểm tra nếu đang trong trạng thái chờ hành động ─────────
+    
+    if pending_action == "awaiting_passenger_info":
+        return await _handle_passenger_info_collection(message, session, session_id)
+    
+    if pending_action == "confirm_booking":
+        msg_lower = message.lower().strip()
+        if msg_lower in ("ok", "có", "co", "yes", "y", "đồng ý", "hoàn tất", "dat", "đặt"):
+            session["pending_action"] = None
+            session["history"].append({"role": "user", "content": message})
+            return await _execute_booking(session, session_id)
+        elif msg_lower in ("hủy", "huy", "no", "k", "không", "ko", "khong", "thôi", "thoi", "cancel"):
+            session["pending_action"] = None
+            session["passengers_to_book"] = []
+            session["selected_flight"] = None
+            session["history"].append({"role": "user", "content": message})
+            session["history"].append({"role": "assistant", "content": "👍 Đã hủy đặt vé. Bạn cần tìm gì khác không?"})
+            return ChatResponse(reply="👍 Đã hủy đặt vé. Bạn cần tìm gì khác không?", type="text")
+        else:
+            session["history"].append({"role": "user", "content": message})
+            session["history"].append({"role": "assistant", "content": "Vui lòng gõ 'Đồng ý' hoặc 'OK' để xác nhận, hoặc 'Hủy' để bỏ qua."})
+            return ChatResponse(reply="Vui lòng gõ 'Đồng ý' hoặc 'OK' để xác nhận, hoặc 'Hủy' để bỏ qua.", type="text", suggestions=["Đồng ý", "OK", "Hủy đặt vé"])
+
     if pending_action == "confirm_search":
         msg_lower = message.lower().strip()
         if msg_lower in ("ok", "có", "co", "yes", "y", "đồng ý", "tim", "tìm", "oke", "okay"):
@@ -150,95 +192,24 @@ async def _handle_ticketing(message: str, session_id: str) -> ChatResponse:
             session["history"].append({"role": "assistant", "content": "👍 Không sao, bạn cần tìm gì thì nói tôi nhé!"})
             return ChatResponse(reply="👍 Không sao, bạn cần tìm gì thì nói tôi nhé!", type="text")
         else:
-            # User trả lời khác — có thể là sửa thông tin
-            # Re-parse với message mới
-            pass
-
-    if pending_action == "awaiting_confirm":
-        parsed = session.get("pending_data", {})
-        # User vừa cung cấp thêm thông tin
-        # Re-parse toàn bộ — ghép message với các giá trị đã biết
-        reparse_context = message
-        for _c_key in ("origin", "destination", "date", "adults", "children"):
-            if parsed.get(_c_key):
-                reparse_context += " " + str(parsed.get(_c_key))
-        new_parsed = parse_flight_search(reparse_context)
-        if new_parsed:
-            # Merge lại
-            merged = {**parsed, **new_parsed}
-            missing = check_missing_info(merged)
-            if not missing:
-                session["pending_action"] = "confirm_search"
-                session["pending_data"] = merged
-
-                origin_name = _reverse_location(merged["origin"])
-                dest_name = _reverse_location(merged["destination"])
-                date_str = merged.get("date", "")
-                try:
-                    d = datetime.strptime(date_str, "%d%m%Y")
-                    date_display = d.strftime("%d/%m/%Y")
-                except (ValueError, TypeError):
-                    date_display = date_str
-                adults = merged.get("adults", 1)
-                confirm_msg = (
-                    f"✈️ **Tìm vé: {origin_name} → {dest_name}**\n"
-                    f"📅 Ngày: {date_display}\n"
-                    f"👤 {adults} người{' lớn' if adults > 0 else ''}"
-                    f"{' + ' + str(merged.get('children', 0)) + ' trẻ em' if merged.get('children', 0) > 0 else ''}"
-                    f"{' + ' + str(merged.get('infants', 0)) + ' em bé' if merged.get('infants', 0) > 0 else ''}\n\n"
-                    f"✅ **Xác nhận tìm?** (gõ OK / Có)"
-                )
-                session["history"].append({"role": "assistant", "content": confirm_msg})
-                return ChatResponse(
-                    reply=confirm_msg,
-                    type="confirm",
-                    data={"params": merged},
-                    suggestions=["OK", "Có", "Đổi ngày", "Hủy"],
-                )
-            else:
-                question = generate_clarify_question(missing, merged)
-                if question:
-                    session["pending_data"] = merged
-                    session["history"].append({"role": "assistant", "content": question})
-                    return ChatResponse(
-                        reply=question,
-                        type="clarify",
-                        data={"missing": missing, "partial": merged},
-                        suggestions=["Hôm nay", "Ngày mai", "Cuối tuần"],
-                    )
-
-        # Không parse được gì thêm → hỏi lại
-        missing = check_missing_info(parsed)
-        question = generate_clarify_question(missing, parsed)
-        if question:
-            session["history"].append({"role": "assistant", "content": question})
+            session["history"].append({"role": "user", "content": message})
+            session["history"].append({"role": "assistant", "content": "Tôi chưa hiểu ý bạn. Vui lòng gõ 'OK' hoặc 'Có' để xác nhận tìm kiếm, hoặc 'Đổi ngày' / 'Hủy' để thay đổi."})
             return ChatResponse(
-                reply=question,
-                type="clarify",
-                data={"missing": missing, "partial": parsed},
-                suggestions=["Hôm nay", "Ngày mai", "Cuối tuần"],
+                reply="Tôi chưa hiểu ý bạn. Vui lòng gõ 'OK' hoặc 'Có' để xác nhận tìm kiếm, hoặc 'Đổi ngày' / 'Hủy' để thay đổi.",
+                type="text",
+                suggestions=["OK", "Có", "Đổi ngày", "Hủy"],
             )
+
+    # if pending_action == "awaiting_confirm": # Removed (handled by LLM function calling)
+    #     # ... (original awaiting_confirm logic, now removed)
+    #     pass # This block is effectively removed
 
     # ── STEP 1: Parse với intent parser local (nhanh, rẻ) ──────────
     parsed = parse_flight_search(message)
     intent_type = classify_intent(message)
 
     # ── STEP 2: Nếu thiếu thông tin → hỏi lại khách ────────────────
-    if parsed and intent_type == "search_flight":
-        missing = check_missing_info(parsed)
-        if missing:
-            question = generate_clarify_question(missing, parsed)
-            if question:
-                session["pending_action"] = "awaiting_confirm"
-                session["pending_data"] = parsed
-                session["pending_confirm_msg"] = question
-                session["history"].append({"role": "assistant", "content": question})
-                return ChatResponse(
-                    reply=question,
-                    type="clarify",
-                    data={"missing": missing, "partial": parsed},
-                    suggestions=["Hôm nay", "Ngày mai", "Cuối tuần"],
-                )
+    # Removed (LLM will use collect_passenger_info or answer_question now)
 
     # ── STEP 3: Nếu đã đầy đủ → confirm trước khi search ──────────
     if parsed and intent_type == "search_flight" and "origin" in parsed and "destination" in parsed:
@@ -356,6 +327,198 @@ async def _handle_ticketing(message: str, session_id: str) -> ChatResponse:
         return ChatResponse(reply=reply, type="text")
 
 
+
+async def _handle_passenger_info_collection(message: str, session: dict, session_id: str) -> ChatResponse:
+    """Xử lý luồng thu thập thông tin hành khách."""
+    # Khởi tạo danh sách hành khách nếu chưa có
+    if "passengers_to_book" not in session:
+        session["passengers_to_book"] = []
+        last_search_params = session.get("last_search", {}).get("params", {})
+        num_adults = last_search_params.get("adults", 1)
+        num_children = last_search_params.get("children", 0)
+        num_infants = last_search_params.get("infants", 0)
+
+        for _ in range(num_adults):
+            session["passengers_to_book"].append({"pax_type": "adult", "info": {}})
+        for _ in range(num_children):
+            session["passengers_to_book"].append({"pax_type": "child", "info": {}})
+        for _ in range(num_infants):
+            session["passengers_to_book"].append({"pax_type": "infant", "info": {}})
+
+        session["current_passenger_index"] = 0
+
+    passengers = session["passengers_to_book"]
+    current_idx = session["current_passenger_index"]
+
+    if current_idx >= len(passengers):
+        # Đã thu thập đủ thông tin tất cả hành khách, chuyển sang xác nhận
+        session["pending_action"] = "confirm_booking"
+        return await _confirm_booking(session, session_id)
+
+    current_pax_entry = passengers[current_idx]
+    current_pax_info = current_pax_entry["info"]
+    pax_type = current_pax_entry["pax_type"]
+    pax_type_display = "người lớn" if pax_type == "adult" else ("trẻ em" if pax_type == "child" else "em bé")
+
+    # 1. --- Xử lý input trực tiếp từ người dùng (ảnh hoặc text) ---
+    # Kiểm tra nếu message là URL ảnh (giả định)
+    image_url_match = re.search(r"(http[s]?://\S+\.(?:png|jpg|jpeg|gif))", message, re.IGNORECASE)
+    if image_url_match:
+        image_url = image_url_match.group(0)
+        # TODO: Integrate vision_analyze here. This requires direct tool calling from the agent,
+        # not directly from the FastAPI backend. For now, we will skip image processing.
+        # This part needs to be handled by the outer Hermes agent if it receives an image.
+        reply_msg = "Tôi đã nhận được ảnh. Hiện tại tôi chưa thể tự động trích xuất thông tin từ ảnh Hộ chiếu/CCCD. Vui lòng gõ thông tin hoặc gửi lại theo cú pháp."
+        session["history"].append({"role": "assistant", "content": reply_msg})
+        return ChatResponse(reply=reply_msg, type="text")
+
+    # Parse thông tin từ text người dùng nhập vào
+    parsed_from_message = parse_passenger_details(message)
+    current_pax_info.update(parsed_from_message)
+
+    # 2. --- Gọi LLM để trích xuất thông tin từ tin nhắn hiện tại (và lịch sử) ---
+    llm = get_llm()
+    llm_context = f"Khách hàng đang cung cấp thông tin cho hành khách {current_idx + 1} ({pax_type}). Các thông tin đã có: {json.dumps(current_pax_info, ensure_ascii=False)}. Thu thập các thông tin còn thiếu: họ tên, ngày sinh (DDMMYYYY), giới tính (Nam/Nữ), số điện thoại, email."
+    llm_result = await llm.chat(
+        message=message,
+        history=session.get("history", []),
+        agent="ticketing",
+        context=llm_context,
+    )
+
+    if llm_result and llm_result.get("type") == "collect_pax":
+        collected_info_from_llm = llm_result.get("params", {})
+        current_pax_info.update(collected_info_from_llm)
+
+    # 3. --- Kiểm tra và hỏi thông tin còn thiếu ---
+    # Nếu các trường này không có, tự động điền "phòng vé"
+    current_pax_info.setdefault("full_name", "phòng vé")
+    current_pax_info.setdefault("date_of_birth", "01011990") # Một ngày sinh mặc định
+    current_pax_info.setdefault("gender", "Nam") # Giới tính mặc định
+    current_pax_info.setdefault("email", "phongve@abtrip.vn") # Email mặc định
+
+    missing_fields = []
+    # Chỉ số điện thoại là bắt buộc phải hỏi khách
+    if current_idx == 0 and not current_pax_info.get("phone_number"):
+        missing_fields.append("Số điện thoại")
+
+    if missing_fields:
+        pax_type_display = "người lớn" if pax_type == "adult" else ("trẻ em" if pax_type == "child" else "em bé")
+        reply_msg = f"Vui lòng cho tôi biết {', '.join(missing_fields).lower()} của hành khách {current_idx + 1} ({pax_type_display}).\n\n💡 Bạn có thể nhập theo cú pháp: `0987654321`"
+        suggestions = []
+        if "Số điện thoại" in missing_fields:
+            suggestions.append("0987654321")
+
+        session["history"].append({"role": "assistant", "content": reply_msg})
+        return ChatResponse(
+            reply=reply_msg,
+            type="clarify_pax_info",
+            data={"missing_fields": missing_fields, "pax_index": current_idx, "pax_type": pax_type},
+            suggestions=suggestions,
+        )
+    else:
+        # Đã đủ thông tin cho hành khách hiện tại, chuyển sang hành khách tiếp theo
+        session["current_passenger_index"] += 1
+        # Lưu thông tin liên hệ đầu tiên làm mặc định nếu các hành khách sau thiếu
+        if current_idx == 0:
+            session["contact_info"] = {
+                "phone_number": current_pax_info.get("phone_number"),
+                "email": current_pax_info.get("email"),
+            }
+        else:
+            # Gợi ý dùng thông tin liên hệ của người đầu tiên nếu còn thiếu
+            if not current_pax_info.get("phone_number") and session["contact_info"].get("phone_number"):
+                current_pax_info["phone_number"] = session["contact_info"]["phone_number"]
+            if not current_pax_info.get("email") and session["contact_info"].get("email"):
+                current_pax_info["email"] = session["contact_info"]["email"]
+
+        reply_msg = f"✅ Đã có đủ thông tin cho hành khách {current_idx + 1} ({pax_type_display})."
+        session["history"].append({"role": "assistant", "content": reply_msg})
+        # Gọi lại chính hàm này để xử lý hành khách tiếp theo hoặc chuyển sang xác nhận
+        return await _handle_passenger_info_collection("", session, session_id) # Empty message to re-trigger flow
+
+async def _confirm_booking(session: dict, session_id: str) -> ChatResponse:
+    """Hiển thị tổng hợp thông tin và yêu cầu xác nhận đặt vé."""
+    selected_flight = session.get("selected_flight", {})
+    passengers = session.get("passengers_to_book", [])
+
+    if not selected_flight or not passengers:
+        session["pending_action"] = None
+        return ChatResponse(reply="⚠️ Có lỗi xảy ra, không tìm thấy thông tin chuyến bay hoặc hành khách để đặt vé. Vui lòng thử lại.", type="text")
+
+    summary_msg = f"**✈️ XÁC NHẬN ĐẶT VÉ ABTRIP**\n\n**Chuyến bay:**\n*   {selected_flight['code']} của {selected_flight['airline_name']}\n*   Thời gian: {selected_flight['depart']} → {selected_flight['arrive']}\n*   Giá vé: **{selected_flight['price_str']}**\n\n**Thông tin hành khách:**\n"
+    for i, pax_entry in enumerate(passengers):
+        pax_info = pax_entry["info"]
+        summary_msg += f"*   **Hành khách {i+1} ({pax_entry['pax_type'].capitalize()}):** {pax_info.get('full_name')}, NS: {pax_info.get('date_of_birth')}, GT: {pax_info.get('gender')}\n"
+        if pax_info.get("phone_number") or pax_info.get("email"):
+            summary_msg += f"    SĐT: {pax_info.get('phone_number', 'N/A')}, Email: {pax_info.get('email', 'N/A')}\n"
+
+    total_price = selected_flight['price_raw'] * len(passengers) # Simplified for now
+    summary_msg += f"\n**Tổng tiền dự kiến:** **{total_price:,.0f}₫**\n\n✅ **Xác nhận đặt vé?** (Gõ 'Đồng ý' hoặc 'OK' để hoàn tất)"
+
+    session["history"].append({"role": "assistant", "content": summary_msg})
+    return ChatResponse(
+        reply=summary_msg,
+        type="confirm_booking",
+        data={"flight": selected_flight, "passengers": passengers},
+        suggestions=["Đồng ý", "OK", "Hủy đặt vé", "Sửa thông tin"],
+    )
+
+async def _execute_booking(session: dict, session_id: str) -> ChatResponse:
+    """Thực hiện gọi API đặt vé và xuất vé."""
+    selected_flight = session.get("selected_flight", {})
+    passengers_to_book = session.get("passengers_to_book", [])
+
+    if not selected_flight or not passengers_to_book:
+        session["pending_action"] = None
+        return ChatResponse(reply="⚠️ Không đủ thông tin để đặt vé. Vui lòng thử lại quy trình từ đầu.", type="text")
+
+    # Gọi API BookFlight và IssueTicket từ abtrip_client.py
+    client = get_client()
+    try:
+        # Bước 1: BookFlight
+        book_response = await client.book_flight(
+            session_info=selected_flight.get("session_info"), # Cần đảm bảo session_info có sẵn từ bước chọn chuyến bay
+            flight_option_id=selected_flight.get("flight_option_id"),
+            fare_option_id=selected_flight.get("fare_option_id"),
+            airline_option_id=selected_flight.get("airline_option_id"),
+            passengers=passengers_to_book # Cần format lại passengers cho đúng với API
+        )
+
+        if not book_response or not book_response.get("Success"):
+            error_msg = book_response.get("Message", "Lỗi đặt chỗ không xác định.")
+            return ChatResponse(reply=f"❌ Đặt chỗ không thành công: {error_msg}. Vui lòng thử lại hoặc liên hệ hỗ trợ.", type="text")
+
+        pnr_code = book_response.get("PNR", "")
+        # Bước 2: IssueTicket
+        issue_response = await client.issue_ticket(
+            session_info=selected_flight.get("session_info"),
+            pnr_code=pnr_code,
+            payment_type="DEFAULT" # Tạm thời dùng DEFAULT, có thể mở rộng sau
+        )
+
+        if not issue_response or not issue_response.get("Success"):
+            error_msg = issue_response.get("Message", "Lỗi xuất vé không xác định.")
+            return ChatResponse(reply=f"❌ Xuất vé không thành công: {error_msg}. Vui lòng liên hệ hỗ trợ với mã đặt chỗ: {pnr_code}.", type="text")
+
+        reply_msg = (
+            f"✅ **ĐẶT VÉ VÀ XUẤT VÉ THÀNH CÔNG!**\n\n"
+            f"Mã đặt chỗ (PNR): **{pnr_code}**\n"
+            f"Bạn sẽ nhận được email xác nhận vé điện tử trong ít phút tới.\n\n"
+            f"Chúc bạn có một chuyến đi vui vẻ!"
+        )
+        session["pending_action"] = None
+        session["passengers_to_book"] = [] # Clear passenger info
+        session["selected_flight"] = None # Clear selected flight
+        session["history"].append({"role": "assistant", "content": reply_msg})
+        return ChatResponse(reply=reply_msg, type="booking_success", data={"pnr": pnr_code})
+
+    except Exception as e:
+        logger.error("Lỗi khi thực hiện đặt/xuất vé: %s", e)
+        session["pending_action"] = None
+        return ChatResponse(reply="❌ Có lỗi xảy ra trong quá trình đặt/xuất vé. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.", type="text")
+
+
 # ── Execute flight search (shared between confirm + LLM paths) ─────
 
 async def _execute_flight_search(
@@ -405,20 +568,22 @@ async def _execute_flight_search(
                 "summary": _summarize_results(api_result, params),
                 "raw": api_result,
             }
-            session["last_results_count"] = len(
-                api_result.get("ListGroup", [])
-            )
+            session["last_raw_flights"] = api_result.get("ListGroup", [])
+            session["last_structured_flights"] = flights_data # Store the processed flights data
+            session["last_results_count"] = len(flights_data)
         else:
             reply = f"❌ Lỗi tra cứu: {api_result.get('Message', 'Không rõ lỗi')}"
             flights_data = None
             session["last_search"] = None
+            session["last_raw_flights"] = None
+            session["last_structured_flights"] = None
 
     session["history"].append({"role": "assistant", "content": reply})
     suggestions = _get_suggestions(session)
 
     data = {"params": params, "last_search": session.get("last_search")}
-    if flights_data:
-        data["flights"] = flights_data
+    if "last_structured_flights" in session:
+        data["flights"] = session["last_structured_flights"]
 
     return ChatResponse(
         reply=reply,
@@ -428,7 +593,69 @@ async def _execute_flight_search(
     )
 
 
-# ── SmartAgent Service Handler ────────────────────────────────────────
+async def _handle_flight_selection(
+    message: str,
+    session: dict,
+    session_id: str, # Thêm session_id vào đây
+    selection_type: Literal["index", "code"],
+    selection_value: str | int,
+) -> ChatResponse:
+    """Handle flight selection by index or flight code."""
+    last_structured_flights = session.get("last_structured_flights")
+    if not last_structured_flights:
+        return ChatResponse(
+            reply="⚠️ Chưa có kết quả chuyến bay nào để chọn. Bạn vui lòng tìm kiếm trước nhé!",
+            type="text",
+            suggestions=["Tìm chuyến bay"]
+        )
+
+    selected_flight = None
+    if selection_type == "index":
+        try:
+            idx = int(selection_value)
+            selected_flight = next((f for f in last_structured_flights if f["index"] == idx), None)
+        except ValueError:
+            pass
+    elif selection_type == "code":
+        code = str(selection_value).upper()
+        selected_flight = next((f for f in last_structured_flights if f["code"].upper() == code), None)
+
+    if not selected_flight:
+        return ChatResponse(
+            reply=f"⚠️ Không tìm thấy chuyến bay #{selection_value}. Vui lòng kiểm tra lại số thứ tự hoặc mã chuyến.",
+            type="text",
+            suggestions=["Xem lại chuyến bay", "Tìm chuyến bay khác"]
+        )
+
+    _AIRLINE_NAMES = {
+        "VN": "Vietnam Airlines", "VJ": "Vietjet Air", "QH": "Bamboo Airways",
+        "BL": "Pacific Airlines", "VU": "Vietravel Airlines",
+    }
+    airline_name = _AIRLINE_NAMES.get(selected_flight["airline"], selected_flight["airline"])
+    reply = (
+        f"✅ Bạn đã chọn chuyến bay **{selected_flight['code']}** của hãng **{airline_name}**\n"
+        f"   Thời gian: {selected_flight['depart']} → {selected_flight['arrive']}\n"
+        f"   Giá vé: **{selected_flight['price_str']}**\n"
+        f"   Tổng cộng {selected_flight['seats']} ghế trống."
+    )
+    # Store selected flight details for later booking steps
+    selected_flight["airline_name"] = airline_name # Add airline_name to selected_flight
+    session["selected_flight"] = selected_flight
+
+    # Chuyển sang trạng thái thu thập thông tin hành khách
+    session["pending_action"] = "awaiting_passenger_info"
+    return await _handle_passenger_info_collection("", session, session_id)
+
+async def _confirm_booking(session: dict, session_id: str) -> ChatResponse:
+    """Hiển thị tổng hợp thông tin và yêu cầu xác nhận đặt vé."""
+    selected_flight = session.get("selected_flight", {})
+    passengers = session.get("passengers_to_book", [])
+    return ChatResponse(
+        reply=reply + "\n\n💡 Vui lòng cung cấp thông tin hành khách để tiếp tục đặt vé.",
+        type="text",
+        suggestions=["Đặt vé ngay", "Hỏi về hành lý"]
+    )
+
 
 async def _handle_smart_service(message: str, session_id: str, session: dict, service: str) -> ChatResponse:
     """Route to the correct SmartAgent service handler."""

@@ -14,7 +14,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.api.bookings import router as bookings_router
 from app.api.reference import router as reference_router
@@ -121,6 +121,16 @@ app.include_router(bookings_router)
 app.include_router(reference_router)
 app.include_router(health_router)
 app.include_router(chat_router)
+
+# Serve static chat page at root (avoids mount path conflicts)
+
+@app.get("/")
+async def serve_chat():
+    import os as _os
+    _chat_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "static", "chat.html")
+    if _os.path.isfile(_chat_path):
+        return FileResponse(_chat_path, media_type="text/html")
+    return HTMLResponse("<h1>Chat page not found</h1>", status_code=404)
 
 
 # ---------------------------------------------------------------------------

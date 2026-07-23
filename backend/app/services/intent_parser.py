@@ -338,16 +338,26 @@ def classify_service(message: str) -> str:
     """Xác định service từ message. Trả về: flight, fasttrack, esim, visa, passport"""
     msg = message.strip().lower()
 
-    if any(kw in msg for kw in ["fast track", "fasttrack", "ưu tiên", "uu tien", "vip"]):
+    # Ưu tiên FLIGHT nếu có từ khóa bay rõ ràng
+    if any(kw in msg for kw in _INTENT_FLIGHT_SEARCH) or (parse_flight_search(message) is not None):
+        return "flight"
+
+    if any(kw in msg for kw in [
+        "fast track", "fasttrack", "ưu tiên", "uu tien", "vip",
+        "phòng chờ", "phong cho", "lounge", "thương gia", "thuong gia",
+        "nối chuyến", "noi chuyen", "transit",
+    ]):
         return "fasttrack"
     if any(kw in msg for kw in ["esim", "e-sim", "sim du lịch", "sim di động", "4g", "5g", "internet", "data", "wifi"]):
         return "esim"
     if any(kw in msg for kw in ["visa", "thị thực", "thi thuc", "xin visa"]):
         return "visa"
-    if any(kw in msg for kw in ["hộ chiếu", "ho chieu", "passport"]):
+    if any(kw in msg for kw in [
+        "hộ chiếu", "ho chieu", "passport", "thiếu mộc", "mộc", "cccd", "căn cước", "em bé", "trẻ em",
+        "in ngang", "cấp đổi", "gia hạn", "giấy phạt", "lăn tay", "bị chú", "thay đổi", "thông tin",
+        "làm lại", "mất hộ chiếu", "hết hạn", "gia hạn", "dán ảnh", "lỗi", "số hộ chiếu",
+    ]):
         return "passport"
-    if any(kw in msg for kw in ["vé máy bay", "vé", "bay", "tìm vé", "flight"]):
-        return "flight"
 
     return "flight"
 
@@ -490,71 +500,80 @@ def parse_booking_intent(text: str) -> dict | None:
     text_lower = text.lower()
     params: dict[str, Any] = {}
 
-    # Tìm flight code
-    match = re.search(r'\b([A-Z0-9]{2,3}\s*\d{3,4})\b', text)
-    if match:
-        params["flight_code"] = match.group(1).replace(" ", "")
 
-    # Tìm thông tin người đặt nếu có
-    # Name pattern: "tên [Name]" or "Nguyễn Văn A"
-    # Phone pattern: 0\d{9,10}
-    match = re.search(r'(0\d{9,10})', text)
-    if match:
-        params["phone"] = match.group(1)
+def parse_passenger_details(text: str) -> dict:
+    """Extracts passenger details (name, dob, gender, phone, email) from free-form text.
+    Supports various formats, including partial input.
+    """
+    details = {"full_name": None, "date_of_birth": None, "gender": None, "phone_number": None, "email": None}
+    text_lower = text.lower().strip()
 
-    return params if params else None
-
-
-def check_missing_info(parsed: dict) -> list[str]:
-    """Check what info is missing for a flight search. Returns list of missing fields."""
-    missing = []
-    if "origin" not in parsed or not parsed.get("origin"):
-        missing.append("điểm đi")
-    if "destination" not in parsed or not parsed.get("destination"):
-        missing.append("điểm đến")
-    if "date" not in parsed or not parsed.get("date"):
-        missing.append("ngày bay")
-    return missing
-
-
-def generate_clarify_question(missing: list[str], parsed: dict) -> str | None:
-    """Generate a natural question to ask the customer for missing info."""
-    if not missing:
-        return None
-
-    origin = parsed.get("origin", "")
-    dest = parsed.get("destination", "")
-    date = parsed.get("date", "")
-    adults = parsed.get("adults", 1)
-
-    # Map codes to Vietnamese airport names
-    _AIRPORT_VIET = {
-        "SGN": "TP.HCM", "HAN": "Hà Nội", "DAD": "Đà Nẵng",
-        "CXR": "Nha Trang", "DLI": "Đà Lạt", "PQC": "Phú Quốc",
-        "HUI": "Huế", "VCS": "Côn Đảo", "VDH": "Đồng Hới",
-        "VII": "Vinh", "DIN": "Điện Biên", "HPH": "Hải Phòng",
-        "VDO": "Vân Đồn", "UIH": "Quy Nhơn", "TBB": "Tuy Hòa",
-        "PXU": "Pleiku", "BMV": "Buôn Ma Thuột", "VCA": "Cần Thơ",
-        "VKG": "Rạch Giá", "VCL": "Chu Lai",
-    }
-    origin_name = _AIRPORT_VIET.get(origin, origin) if origin else ""
-    dest_name = _AIRPORT_VIET.get(dest, dest) if dest else ""
-
-    if not origin and not dest:
-        return "✈️ Bạn muốn bay từ đâu đi đâu vậy ạ?"
-    if origin and not dest:
-        return f"✈️ Từ {origin_name}, bạn muốn bay đi đâu ạ?"
-    if dest and not origin:
-        return f"✈️ Bạn muốn bay từ đâu đến {dest_name} ạ?"
-    if origin and dest and not date:
-        return f"✈️ Từ {origin_name} → {dest_name}, bạn bay ngày nào ạ?"
-    if origin and dest and date:
-        # All info available — just confirm rather than ask
+    # 1. Full-line pattern: NGUYEN VAN A / Nam / 15-10-1995 / 0987654321 / a@gmail.com
+    full_pattern = re.search(r"^(.*?)\s*/\s*(nam|nữ|nu)\s*/\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s*/\s*(\d{7,15})?\s*/\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})?$", text, re.IGNORECASE)
+    if full_pattern:
+        details["full_name"] = full_pattern.group(1).strip().upper()
+        details["gender"] = "Nam" if full_pattern.group(2).lower() == "nam" else "Nữ"
+        dob_str = full_pattern.group(3).replace("-", "/")
         try:
-            d = datetime.strptime(date, "%d%m%Y")
-            date_display = d.strftime("%d/%m/%Y")
+            details["date_of_birth"] = datetime.strptime(dob_str, "%d/%m/%Y").strftime("%d%m%Y")
         except ValueError:
-            date_display = date
-        return None  # All set
+            pass # Keep as None if invalid
+        details["phone_number"] = full_pattern.group(4) if full_pattern.group(4) else None
+        details["email"] = full_pattern.group(5) if full_pattern.group(5) else None
+        return {k: v for k, v in details.items() if v is not None} # Return only non-None values
 
-    return "✈️ Bạn vui lòng cho biết điểm đi, điểm đến và ngày bay nhé!"
+    # 2. Parse individual fields
+    # Full name: Assume anything not matching other patterns is part of the name, prioritize longer strings for name
+    # This is tricky for free-form. We will rely on LLM for better name parsing in chat.py's llm.chat call
+    # For now, if no other patterns match, assume the whole message is a name if no other fields are found
+    
+    # Gender
+    if re.search(r'\b(nam)\b', text_lower):
+        details["gender"] = "Nam"
+    elif re.search(r'\b(nữ|nu)\b', text_lower):
+        details["gender"] = "Nữ"
+
+    # Date of Birth (DDMMYYYY, DD/MM/YYYY, DD-MM-YYYY)
+    dob_match = re.search(r'\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b', text)
+    if dob_match:
+        dob_str = dob_match.group(1).replace("-", "/")
+        try:
+            details["date_of_birth"] = datetime.strptime(dob_str, "%d/%m/%Y").strftime("%d%m%Y")
+        except ValueError:
+            pass
+
+    # Phone Number
+    phone_match = re.search(r'(0|\+84|84)?(\d{9,10})\b', text)
+    if phone_match:
+        phone_num = phone_match.group(0) # Get full match
+        # Standardize to 0xxxxxxxxx or 84xxxxxxxxx
+        if phone_num.startswith("+84"):
+            details["phone_number"] = phone_num
+        elif phone_num.startswith("84"):
+            details["phone_number"] = "+" + phone_num
+        elif phone_num.startswith("0") and len(phone_num) >= 10:
+            details["phone_number"] = "+84" + phone_num[1:]
+        elif len(phone_num) == 9 and not phone_num.startswith("0"):
+            details["phone_number"] = "+84" + phone_num # Assume missing 0 and country code
+        else:
+            details["phone_number"] = phone_num # Keep as is if ambiguous
+
+    # Email
+    email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text_lower)
+    if email_match:
+        details["email"] = email_match.group(0)
+
+    # If only one significant part of the message is left, assume it\'s the full name
+    # This is a fallback and can be improved with LLM in chat.py
+    remaining_text = text
+    for value in details.values():
+        if value and isinstance(value, str):
+            remaining_text = remaining_text.replace(value, "", 1) # Replace only first occurrence
+    remaining_text = re.sub(r'[/\-]', '', remaining_text).strip() # Remove delimiters
+    
+    # If the remaining text is not empty and seems like a name (not just numbers/symbols)
+    if remaining_text and len(remaining_text.split()) > 1 and details["full_name"] is None: # At least two words for a name
+        details["full_name"] = remaining_text.strip().upper()
+
+
+    return {k: v for k, v in details.items() if v is not None}

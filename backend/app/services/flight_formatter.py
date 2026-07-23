@@ -87,18 +87,155 @@ def format_flight_results(data: dict[str, Any], params: dict[str, Any] | None = 
     if not parsed:
         return f"{header}😔 Không tìm thấy chuyến bay nào."
 
-    # Sort by price
-    parsed.sort(key=lambda x: x["price"])
-    cheapest = parsed[0]["price"]
+    # Sort by price. Store raw AGT option data for selection later.
+    sorted_options = []
+    # AGT API can return duplicate flight *options* if different fare classes have same flight.
+    # Group by unique flight/time/price to avoid showing duplicates to user, but keep AGT unique IDs.
+    seen_flights_display = set() # (airline, flight_num, depart_time, arrive_time, price)
+    idx = 1
+    for group in groups:
+        for air_option in group.get("ListAirOption", []):
+            price = float(air_option.get("Price", 0) or 0)
+            currency = air_option.get("Currency", "VND")
+            
+            # Find the actual flight details from ListFlightOption.ListFlight
+            flight_details = None
+            for flight_option in air_option.get("ListFlightOption", []):
+                if flight_option.get("ListFlight"):
+                    flight_details = flight_option["ListFlight"][0]
+                    break
+            
+            if not flight_details:
+                logger.warning(f"No flight details found for air_option: {air_option.get('AirlineOptionId')}")
+                continue
 
-    # Fastest flight
-    fastest = min(
-        (f for f in parsed if f["depart_time"] and ":" in f["depart_time"]),
-        key=lambda x: _get_duration_hours(x["depart_time"], x["arrive_time"]),
-        default=None,
-    )
+            airline = flight_details.get("Airline", "")
+            flight_number = flight_details.get("FlightNumber", "")
+            depart_time = flight_details.get("DepartDate", "").split()[-1][:5] if " " in str(flight_details.get("DepartDate", "")) else ""
+            arrive_time = flight_details.get("ArriveDate", "").split()[-1][:5] if " " in str(flight_details.get("ArriveDate", "")) else ""
 
-    # Build lines — compact format
+            display_key = (airline, flight_number, depart_time, arrive_time, price)
+
+            if display_key not in seen_flights_display:
+                seen_flights_display.add(display_key)
+                # Store full AGT option IDs for booking
+                sorted_options.append({
+                    "idx": idx, # User-facing index
+                    "airline": airline,
+                    "flight_number": flight_number,
+                    "depart_time": depart_time,
+                    "arrive_time": arrive_time,
+                    "price": price,
+                    "currency": currency,
+                    "all_option_ids": { # The specific combo needed for BookFlight/GetAncillary
+                        "Session": air_option.get("Session", ""),
+                        "AirlineOptionId": air_option.get("AirlineOptionId", 0),
+                        "FareOptionId": flight_option.get("FareOptionId", 0), # FareOptionId is in flight_option
+                        "FlightOptionId": flight_option.get("FlightOptionId", 0), # FlightOptionId is in flight_option
+                    },
+                    "seats": air_option.get("Seats", 0),
+                    "stops": flight_details.get("StopNum", 0),
+                    "raw_air_option": air_option, # For full detail if needed
+                    "raw_flight_details": flight_details, # For full detail if needed
+                })
+                idx += 1
+    
+    # Actually sort the collected flights by price
+    sorted_options.sort(key=lambda x: x["price"])
+
+    if not sorted_options:
+        msg = f"{header}😔 Không tìm thấy chuyến bay nào phù hợp sau khi lọc trùng. Bạn thử đổi ngày khác nhé?"
+        return (msg, []) if return_data else msg
+    
+    cheapest = sorted_options[0]["price"]
+
+    # Build lines for display
+    lines = []
+    airline_colors = {
+        "VN": "🔵", "VJ": "🔴", "QH": "🟢", "VU": "🟠", "9G": "🟣",
+        "BL": "⚪", "MH": "🔴", "SQ": "🟡", "EK": "🔴", "QR": "🟣",
+    }
+    structured_flights_list = [] # For return_data, containing full details
+    for f_option in sorted_options[:10]: # Display top 10
+        al = f_option["airline"]
+        fn = f_option["flight_number"]
+        dep = f_option["depart_time"]
+        arr = f_option["arrive_time"]
+
+        flight_code = f"{al}{fn}"
+        if fn.upper().startswith(al.upper()):
+            flight_code = f"{al}{fn[len(al):]}"
+        elif fn.upper() == al.upper():
+            flight_code = al
+        
+        # Truncate to max 7 chars for table alignment
+        if len(flight_code) > 7:
+            flight_code = flight_code[:7]
+
+        price_str = f"{int(f_option['price']):,}₫"
+        
+        emoji = airline_colors.get(al, "✈️")
+        tags = []
+        if f_option["price"] == cheapest:
+            tags.append("⭐")
+        dur_h = _get_duration_hours(f_option["depart_time"], f_option["arrive_time"])
+        dur_str = f" ({dur_h}h)" if dur_h else ""
+
+        # Prepend user-facing index
+        idx_str = f"[{f_option['idx']}] ".ljust(5)
+
+        # Table row with fixed widths
+        # Format: [idx] emoji code    dep → arr     price        dur
+        code_part = flight_code.ljust(8)
+        time_part = f"{dep} → {arr}".ljust(16)
+        price_part = price_str.rjust(14)
+        dur_part = dur_str.ljust(8)
+        line = f"{idx_str}{emoji} {code_part}{time_part}{price_part}  {dur_part}"
+        if tags:
+            line += " " + " ".join(tags)
+        lines.append(line)
+
+        # Build structured data for return_data output
+        structured_flights_list.append({
+            "index": f_option['idx'],
+            "airline": al,
+            "code": flight_code,
+            "depart": f_option["depart_time"],
+            "arrive": f_option["arrive_time"],
+            "price": f_option["price"],
+            "price_str": price_str,
+            "cheapest": f_option["price"] == cheapest,
+            "duration_h": dur_h,
+            "seats": f_option["seats"],
+            "stops": f_option["stops"],
+            "all_option_ids": f_option["all_option_ids"], # Include the booking IDs
+        })
+
+    # Build table format with code block (wider layout, header matches column widths)
+    header_row = "      " + "Mã số".ljust(8) + "Giờ đi → Đến".ljust(16) + "Giá".rjust(14) + "    " + "Bay"
+    sep_row =    "────" + "─" * 7 + " " + "─" * 15 + " " + "─" * 14 + " " + "─" * 7
+    body = header + "```\n"
+    body += header_row + "\n"
+    body += sep_row + "\n"
+    for line in lines:
+        body += line + "\n"
+    body += "```\n"
+    # Footer
+    adults = (params or {}).get("adults", 1)
+    children = (params or {}).get("children", 0)
+    total = adults + children
+    body += f"\n💰 Rẻ nhất: **{int(cheapest):,}₫**"
+    if total > 1:
+        body += f" | 👥 {adults} NL{' + ' + str(children) + ' TE' if children else ''}"
+        body += f" | **Tổng: {int(cheapest * total):,}₫**"
+    
+    # Add selection instructions
+    body += "\n\n👉 **Chọn chuyến bay:** Gõ `chọn` [số thứ tự] hoặc `đặt` [mã chuyến bay]"
+    body += "\n   (VD: `chọn 1` hoặc `đặt BL360`)"
+
+    if return_data:
+        return body, structured_flights_list
+    return body
     lines = []
     airline_colors = {
         "VN": "🔵", "VJ": "🔴", "QH": "🟢", "VU": "🟠", "9G": "🟣",
@@ -134,12 +271,12 @@ def format_flight_results(data: dict[str, Any], params: dict[str, Any] | None = 
         dur = _get_duration_hours(f["depart_time"], f["arrive_time"])
         dur_str = f" ({dur}h)" if dur else ""
 
-        # Table row with fixed widths
-        # Format: emoji code   dep→arr   price    dur
-        code_part = flight_code.ljust(6)
-        time_part = f"{dep}→{arr}".ljust(13)
-        price_part = price_str.rjust(12)
-        dur_part = dur_str.ljust(6)
+        # Table row with fixed widths (wider layout for readability)
+        # Format: emoji code    dep → arr     price        dur
+        code_part = flight_code.ljust(8)
+        time_part = f"{dep} → {arr}".ljust(16)
+        price_part = price_str.rjust(14)
+        dur_part = dur_str.ljust(8)
         line = f"{emoji} {code_part}{time_part}{price_part}  {dur_part}"
         if tags:
             line += " " + " ".join(tags)
@@ -167,10 +304,12 @@ def format_flight_results(data: dict[str, Any], params: dict[str, Any] | None = 
             "seats": f["seats"],
         })
 
-    # Build table format with code block
+    # Build table format with code block (wider layout, header matches column widths)
+    header_row = "  " + "Mã số".ljust(8) + "Giờ đi → Đến".ljust(16) + "Giá".rjust(14) + "    " + "Bay"
+    sep_row = "  " + "─" * 7 + " " + "─" * 15 + " " + "─" * 14 + " " + "─" * 7
     body = header + "```\n"
-    body += "Mã số    Giờ đi → Đến    Giá             Bay\n"
-    body += "─────  ─────────────  ─────────────  ──────\n"
+    body += header_row + "\n"
+    body += sep_row + "\n"
     for line in lines:
         body += line + "\n"
     body += "```\n"

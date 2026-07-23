@@ -82,6 +82,8 @@ class ABTripClient:
             response = await self._client.post(url, json=payload)
             response.raise_for_status()
             data: dict[str, Any] = response.json()
+            if not isinstance(data, dict):
+                data = {"Success": True, "Message": "OK", "Data": data}
             logger.debug("AGT %s -> %s", url, data.get("Message", "OK"))
             return data
         except httpx.TimeoutException as exc:
@@ -142,18 +144,30 @@ class ABTripClient:
     async def book_flight(
         self,
         forced: bool = False,
-        system: str = "",
+        system: str = "VN",
+        session: str = "",
         guest_contact: Optional[dict[str, Any]] = None,
         agent_contact: Optional[dict[str, Any]] = None,
         passengers: Optional[list[dict[str, Any]]] = None,
-        air_options: Optional[list[dict[str, Any]]] = None,
-        option: str = "",
+        airline_option_id: int = 0,
+        fare_option_id: int = 0,
+        flight_option_id: int = 0,
         payment: Optional[dict[str, Any]] = None,
+        option: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """
         Book a flight.
 
         POST /Flight/BookFlight
+
+        Note: passenger dicts must follow the AGT schema, e.g.:
+            {
+                "Index": 1, "ParentId": -1, "Type": "ADT", "Title": "Mr",
+                "Gender": 1, "GivenName": "Tan", "Surname": "Nguyen",
+                "DateOfBirth": "01051984", "PassengerId": 1, "NameId": 1,
+                "Passport": {}, "ListBaggage": [], "ListPreSeat": [],
+                "ListService": [], "ListFareInfo": [], "ListMembership": [],
+            }
         """
         body = {
             "Forced": forced,
@@ -161,8 +175,29 @@ class ABTripClient:
             "GuestContact": guest_contact or {},
             "AgentContact": agent_contact or {},
             "ListPassenger": passengers or [],
-            "ListAirOption": air_options or [],
-            "Option": option,
+            "ListAirOption": [
+                {
+                    "Session": session,
+                    "AirlineOptionId": airline_option_id,
+                    "FareOptionId": fare_option_id,
+                    "FlightOptionId": flight_option_id,
+                    "Tourcode": "",
+                    "CAcode": "",
+                    "VIPText": "",
+                    "Remark": "ABTrip",
+                    "AccountCode": "",
+                    "BookerCode": "",
+                    "System": system,
+                }
+            ],
+            "Option": option
+            or {
+                "IssueTicket": False,
+                "SeparateBooking": True,
+                "SendEmail": True,
+                "AgentId": "",
+                "RefId": "",
+            },
             "Payment": payment or {},
         }
         return await self._post("BookFlight", body)
@@ -186,36 +221,67 @@ class ABTripClient:
         return await self._post("RetrieveBooking", body)
 
     async def get_ancillary(
-        self, sessions: Optional[list[dict[str, Any]]] = None
+        self,
+        session: str = "",
+        system: str = "VN",
+        airline_option_id: int = 0,
+        fare_option_id: int = 0,
+        flight_option_id: int = 0,
     ) -> dict[str, Any]:
         """
-        Get ancillary services (bags, meals, etc.) for search results.
+        Get ancillary services (bags, meals, etc.) for a selected flight.
 
         POST /Flight/GetAncillary
         """
-        body = {"ListSession": sessions or []}
+        body = {
+            "System": system,
+            "SessionInfo": {
+                "Session": session,
+                "AirlineOptionId": airline_option_id,
+                "FareOptionId": fare_option_id,
+                "FlightOptionId": flight_option_id,
+            },
+        }
         return await self._post("GetAncillary", body)
 
     async def get_fare_rule(
-        self, sessions: Optional[list[dict[str, Any]]] = None
+        self,
+        system: str = "VN",
+        fare_class: str = "",
     ) -> dict[str, Any]:
         """
-        Get fare rules for search results.
+        Get fare rules.
 
         POST /Flight/GetFareRule
         """
-        body = {"ListSession": sessions or []}
+        body = {
+            "System": system,
+            "FareClass": fare_class,
+        }
         return await self._post("GetFareRule", body)
 
     async def get_seat_map(
-        self, sessions: Optional[list[dict[str, Any]]] = None
+        self,
+        session: str = "",
+        system: str = "VN",
+        airline_option_id: int = 0,
+        fare_option_id: int = 0,
+        flight_option_id: int = 0,
     ) -> dict[str, Any]:
         """
-        Get seat map for search results.
+        Get seat map for a selected flight.
 
         POST /Flight/GetSeatMap
         """
-        body = {"ListSession": sessions or []}
+        body = {
+            "System": system,
+            "SessionInfo": {
+                "Session": session,
+                "AirlineOptionId": airline_option_id,
+                "FareOptionId": fare_option_id,
+                "FlightOptionId": flight_option_id,
+            },
+        }
         return await self._post("GetSeatMap", body)
 
     async def get_airports(self) -> dict[str, Any]:

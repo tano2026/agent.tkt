@@ -77,14 +77,20 @@ async def book_flight(body: dict[str, Any]) -> dict[str, Any]:
     logger.info("Book flight: system=%s", body.get("System"))
     client = get_client()
 
+    # Extract first air option details
+    air_options = body.get("ListAirOption", [])
+    first_opt = air_options[0] if air_options else {}
+
     result = await client.book_flight(
         forced=body.get("Forced", False),
-        system=body.get("System", ""),
+        system=body.get("System", "VN"),
+        session=first_opt.get("Session", ""),
         guest_contact=body.get("GuestContact"),
         agent_contact=body.get("AgentContact"),
         passengers=body.get("ListPassenger"),
-        air_options=body.get("ListAirOption"),
-        option=body.get("Option", ""),
+        airline_option_id=first_opt.get("AirlineOptionId", 0),
+        fare_option_id=first_opt.get("FareOptionId", 0),
+        flight_option_id=first_opt.get("FlightOptionId", 0),
         payment=body.get("Payment"),
     )
 

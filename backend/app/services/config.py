@@ -10,8 +10,8 @@ from functools import lru_cache
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # AGT API Configuration
-    agt_api_host: str = "https://api.abtrip.vn"
+    # AGT API Configuration (Sandbox/Test)
+    agt_api_host: str = "https://api-abtrip.timtrungtam.com/v1"
     agt_private_key: str = ""
     agt_api_account: str = ""
     agt_api_password: str = ""
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # OmniRoute API (for LLM chat)
     omniroute_api_key: str = ""
     omniroute_base_url: str = "http://100.64.173.75:20128/v1"
-    omniroute_model: str = "tllm/claude_haiku_3_5"
+    omniroute_model: str = "deepseek-chat"
 
     # HHTech API
     hhtech_api_key: str = ""

@@ -52,7 +52,8 @@ class ConversationMemory:
     def _conn(self) -> sqlite3.Connection:
         """Get thread-local connection."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+            if self._db_path != ":memory:":
+                os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
             conn = sqlite3.connect(self._db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
@@ -61,8 +62,9 @@ class ConversationMemory:
         return self._local.conn
 
     def _init_db(self) -> None:
-        """Create table if not exists."""
+        """Create tables if not exists."""
         conn = self._conn
+        # Create conversations table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 session_id TEXT PRIMARY KEY,
@@ -74,6 +76,36 @@ class ConversationMemory:
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_conversations_updated
             ON conversations(updated_at)
+        """)
+
+        # Create flight_watches table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS flight_watches (
+                watch_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                original_flight_details TEXT NOT NULL,
+                search_params TEXT NOT NULL,
+                target_price_threshold REAL NOT NULL,
+                last_checked_price REAL,
+                last_check_time TIMESTAMP,
+                status TEXT NOT NULL,
+                notify_on_new_price INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES conversations(session_id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flight_watches_session_id
+            ON flight_watches(session_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flight_watches_status
+            ON flight_watches(status)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flight_watches_updated
+            ON flight_watches(updated_at)
         """)
         conn.commit()
 
