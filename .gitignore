@@ -33,6 +33,9 @@ node_modules/
 out/
 .npm/
 
+# Chroma vector store (local only)
+.chroma/
+
 # Runtime
 debug_*.txt
 debug_*.json
