@@ -11,8 +11,11 @@ import secrets
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from app.middleware.auth_middleware import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -280,8 +283,9 @@ async def search_flights(
     destination: str = Query(..., min_length=3, max_length=3, description="Sân bay đến"),
     depart_date: str = Query(..., description="Ngày đi YYYY-MM-DD"),
     passengers: int = Query(default=1, ge=1, le=10),
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
 ):
-    """Tìm chuyến bay — giả data Phase 1."""
+    """Tìm chuyến bay — giả data Phase 1. Yêu cầu auth."""
     origin = origin.upper()
     destination = destination.upper()
 
@@ -299,8 +303,11 @@ async def search_flights(
 
 
 @router.post("/book", response_model=BookFlightResponse)
-async def book_flight(req: BookFlightRequest):
-    """Đặt vé máy bay — giả data, trả về booking_ref."""
+async def book_flight(
+    req: BookFlightRequest,
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+):
+    """Đặt vé máy bay — giả data, trả về booking_ref. Yêu cầu auth."""
     # Validate flight code format (mock — accept any valid format)
     valid_airlines = list(AIRLINES.keys())
     airline_prefix = req.flight_code[:2].upper()
@@ -340,8 +347,11 @@ async def book_flight(req: BookFlightRequest):
 
 
 @router.get("/pnr/{booking_ref}", response_model=PNRResponse)
-async def track_pnr(booking_ref: str):
-    """Tra cứu trạng thái booking theo mã PNR."""
+async def track_pnr(
+    booking_ref: str,
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+):
+    """Tra cứu trạng thái booking theo mã PNR. Yêu cầu auth."""
     booking = _booking_store.get(booking_ref.upper())
     if not booking:
         # generate mock PNR data if not found (for demo purposes)

@@ -17,6 +17,7 @@ from app.services.config import get_settings
 from app.services.abtrip_client import close_client
 from app.services.llm_gateway import close_llm
 # Rag_service removed — not integrated with smart_agent (CRIT-1)
+from app.services.auth_service import router as auth_router
 from app.services.smart_agent import router as smart_agent_router
 from app.services.api_flights import router as api_flights_router
 from app.services.api_fasttrack import router as api_fasttrack_router
@@ -117,6 +118,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # Register routers
 # ---------------------------------------------------------------------------
 
+app.include_router(auth_router)
 app.include_router(bookings_router)
 app.include_router(reference_router)
 app.include_router(health_router)

@@ -11,8 +11,11 @@ import secrets
 from datetime import datetime
 from typing import Optional, List, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from app.middleware.auth_middleware import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -185,8 +188,14 @@ async def get_packages():
 
 
 @router.post("/orders", response_model=ESIMOrderResponse)
-async def create_order(req: ESIMOrderRequest):
-    """Đặt mua eSIM du lịch."""
+async def create_order(
+    req: ESIMOrderRequest,
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+):
+    """Đặt mua eSIM du lịch. Yêu cầu auth."""
+    # IDOR fix: chỉ được đặt cho chính tenant của mình
+    if "tenant_id" in user and int(user["tenant_id"]) != req.tenant_id:
+        raise HTTPException(403, "Không có quyền đặt dịch vụ cho CTV khác")
     if req.package_id not in PACKAGES_MAP:
         raise HTTPException(400, f"Gói eSIM '{req.package_id}' không tồn tại")
 
@@ -225,8 +234,12 @@ async def create_order(req: ESIMOrderRequest):
 async def get_orders(
     tenant_id: int = Query(..., gt=0, description="ID CTV"),
     status: Optional[str] = Query(None),
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
 ):
-    """Lấy lịch sử đặt eSIM theo tenant_id."""
+    """Lấy lịch sử đặt eSIM theo tenant_id. Yêu cầu auth."""
+    # IDOR fix: chỉ xem được order của chính mình
+    if "tenant_id" in user and int(user["tenant_id"]) != tenant_id:
+        raise HTTPException(403, "Không có quyền xem order của CTV khác")
     result = []
     for o in _orders_store:
         if o["tenant_id"] != tenant_id:

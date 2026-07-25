@@ -11,8 +11,11 @@ import secrets
 from datetime import datetime, date
 from typing import Optional, List, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from app.middleware.auth_middleware import get_current_user_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +166,14 @@ async def get_packages():
 
 
 @router.post("/orders", response_model=FastTrackOrderResponse)
-async def create_order(req: FastTrackOrderRequest):
-    """Tạo đơn Fast Track / VIP Lounge."""
+async def create_order(
+    req: FastTrackOrderRequest,
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+):
+    """Tạo đơn Fast Track / VIP Lounge. Yêu cầu auth."""
+    # IDOR fix: chỉ được đặt cho chính tenant của mình
+    if "tenant_id" in user and int(user["tenant_id"]) != req.tenant_id:
+        raise HTTPException(403, "Không có quyền đặt dịch vụ cho CTV khác")
     if req.package not in PACKAGES_MAP:
         raise HTTPException(400, f"Gói '{req.package}' không tồn tại. Các gói: {', '.join(PACKAGES_MAP.keys())}")
 
@@ -223,8 +232,12 @@ async def create_order(req: FastTrackOrderRequest):
 async def get_orders(
     tenant_id: int = Query(..., gt=0, description="ID CTV"),
     status: Optional[str] = Query(None, description="Lọc theo trạng thái"),
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
 ):
-    """Lấy lịch sử Fast Track orders theo tenant_id."""
+    """Lấy lịch sử Fast Track orders theo tenant_id. Yêu cầu auth."""
+    # IDOR fix: chỉ xem được order của chính mình
+    if "tenant_id" in user and int(user["tenant_id"]) != tenant_id:
+        raise HTTPException(403, "Không có quyền xem order của CTV khác")
     result = []
     for o in _orders_store:
         if o["tenant_id"] != tenant_id:

@@ -16,15 +16,18 @@ import asyncio
 import uuid
 from datetime import datetime, date, timedelta
 
-from app.services.rag_service import get_rag_service, init_rag # Import RAG service
+from app.services.rag_service import get_rag_service, init_rag, is_operational_query
+from app.services.abtrip_client import ABTripClient
 from decimal import Decimal
 from typing import Optional, List
+import re
 
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from app.middleware.auth_middleware import get_current_user_or_api_key
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, DateTime, Text, Date,
     ForeignKey, Enum, create_engine, select, func
@@ -308,8 +311,16 @@ async def register_tenant(req: RegisterRequest, db: AsyncSession = Depends(get_d
 # --- 2. Get tenant info ---
 
 @router.get("/tenant/{tenant_id}")
-async def get_tenant(tenant_id: int, db: AsyncSession = Depends(get_db)):
-    """Thông tin CTV."""
+async def get_tenant(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
+):
+    """Thông tin CTV — chỉ xem được chính mình hoặc admin."""
+    # IDOR fix: chỉ cho phép xem tenant của chính mình
+    if "tenant_id" in user and int(user["tenant_id"]) != tenant_id:
+        raise HTTPException(403, "Không có quyền xem thông tin CTV khác")
+
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -339,8 +350,9 @@ async def list_tenants(
     status: Optional[str] = None,
     tier: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
 ):
-    """Danh sách CTV."""
+    """Danh sách CTV — yêu cầu auth (thường dành cho admin)."""
     query = select(Tenant)
     if status:
         query = query.where(Tenant.status == status)
@@ -370,8 +382,16 @@ async def list_tenants(
 # --- 4. Upgrade tier ---
 
 @router.post("/upgrade")
-async def upgrade_tenant(req: UpgradeRequest, db: AsyncSession = Depends(get_db)):
+async def upgrade_tenant(
+    req: UpgradeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
+):
     """Nâng cấp lên Pro hoặc White-label."""
+    # IDOR fix: chỉ được upgrade chính mình
+    if "tenant_id" in user and int(user["tenant_id"]) != req.tenant_id:
+        raise HTTPException(403, "Không có quyền nâng cấp CTV khác")
+
     result = await db.execute(select(Tenant).where(Tenant.id == req.tenant_id))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -418,8 +438,16 @@ FASTTRACK_NIGHT_SURCHARGE = 200_000  # 23:00-06:00
 
 
 @router.post("/fasttrack")
-async def create_fasttrack(req: FastTrackRequest, db: AsyncSession = Depends(get_db)):
+async def create_fasttrack(
+    req: FastTrackRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
+):
     """Đặt Fast Track / VIP Lounge."""
+    # IDOR fix: chỉ được đặt cho chính tenant của mình
+    if "tenant_id" in user and int(user["tenant_id"]) != req.tenant_id:
+        raise HTTPException(403, "Không có quyền đặt dịch vụ cho CTV khác")
+
     result = await db.execute(select(Tenant).where(Tenant.id == req.tenant_id))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -463,11 +491,16 @@ async def list_fasttrack_orders(
     tenant_id: Optional[int] = None,
     status: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
 ):
-    """Danh sách Fast Track orders."""
-    query = select(FastTrackOrder)
-    if tenant_id:
-        query = query.where(FastTrackOrder.tenant_id == tenant_id)
+    """Danh sách Fast Track orders — chỉ xem được order của chính mình."""
+    # IDOR fix: tự động giới hạn theo tenant_id từ JWT
+    if "tenant_id" in user:
+        query_tenant_id = int(user["tenant_id"])
+    else:
+        query_tenant_id = tenant_id
+
+    query = select(FastTrackOrder).where(FastTrackOrder.tenant_id == query_tenant_id)
     if status:
         query = query.where(FastTrackOrder.status == status)
     query = query.order_by(FastTrackOrder.created_at.desc())
@@ -502,8 +535,16 @@ async def list_esim_packages():
 
 
 @router.post("/esim")
-async def create_esim(req: ESIMRequest, db: AsyncSession = Depends(get_db)):
+async def create_esim(
+    req: ESIMRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
+):
     """Đặt eSIM du lịch."""
+    # IDOR fix: chỉ được đặt cho chính tenant của mình
+    if "tenant_id" in user and int(user["tenant_id"]) != req.tenant_id:
+        raise HTTPException(403, "Không có quyền đặt dịch vụ cho CTV khác")
+
     result = await db.execute(select(Tenant).where(Tenant.id == req.tenant_id))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -546,8 +587,11 @@ async def create_esim(req: ESIMRequest, db: AsyncSession = Depends(get_db)):
 # --- 7. Dashboard stats ---
 
 @router.get("/dashboard/stats")
-async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
-    """Thống kê tổng quan cho admin."""
+async def get_dashboard_stats(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
+):
+    """Thống kê tổng quan — yêu cầu auth."""
     total_tenants = await db.scalar(select(func.count(Tenant.id)))
     active_tenants = await db.scalar(
         select(func.count(Tenant.id)).where(Tenant.status == "active")
@@ -583,6 +627,7 @@ async def payment_callback(
     amount: float = Query(...),
     status: str = Query("completed"),
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user_or_api_key),
 ):
     """Callback thanh toán từ Momo/VNPay (stub)."""
     payment = Payment(
@@ -601,12 +646,185 @@ async def payment_callback(
 
 
 # ────────────────────────────────────────────────────────────────────
+# Flight search helpers (AGT integration)
+# ────────────────────────────────────────────────────────────────────
+
+_AIRPORT_ALIAS = {
+    "sg": "SGN", "sgn": "SGN", "sài gòn": "SGN", "saigon": "SGN", "hcm": "SGN", "tp hcm": "SGN", "tphcm": "SGN", "hồ chí minh": "SGN", "thành phố hồ chí minh": "SGN",
+    "hn": "HAN", "han": "HAN", "hà nội": "HAN", "hanoi": "HAN",
+    "đn": "DAD", "dad": "DAD", "đà nẵng": "DAD", "danang": "DAD",
+    "nt": "CXR", "nha trang": "CXR", "nhatrang": "CXR", "cam ranh": "CXR",
+    "pq": "PQC", "phú quốc": "PQC", "phu quoc": "PQC",
+    "hp": "HPH", "hải phòng": "HPH", "haiphong": "HPH",
+    "huế": "HUI", "hue": "HUI",
+    "dl": "DLI", "đà lạt": "DLI", "dalat": "DLI",
+    "vt": "VCA", "vũng tàu": "VCS", "vung tau": "VCS", "côn đảo": "VCS",
+    "bm": "BMV", "buôn mê": "BMV", "buon me": "BMV",
+    "thanh hóa": "THD", "thanh hoa": "THD",
+    "vđ": "VDH", "vinh": "VII", "đồng hới": "VDH", "dong hoi": "VDH",
+    "quy nhơn": "UIH", "quy nhon": "UIH",
+    "tuy hoà": "TBB", "tuy hoa": "TBB",
+    "pleiku": "PXU",
+    "cần thơ": "VCA", "can tho": "VCA",
+    "rách giá": "VKG",
+    "cà mau": "CAH",
+    # Direction words (default to HAN/SGN hubs)
+    "bắc": "HAN", "miền bắc": "HAN", "ngoài bắc": "HAN",
+    "nam": "SGN", "miền nam": "SGN", "trong nam": "SGN",
+    "miền trung": "DAD", "trung": "DAD",
+}
+
+def _extract_flight_params(texts: list[str]) -> dict | None:
+    """Extract flight search parameters from a list of user messages."""
+    combined = " ".join(texts).lower()
+    params = {"from": None, "to": None, "date": None, "adt": 1}
+
+    # Find origin-destination pairs
+    od_patterns = [
+        # "từ HN đến SG" / "bay từ hn đi sg" / "đi từ hn vào sg"
+        r"(?:từ|bay từ|đi từ|chuyến bay từ)\s+(\S+(?:\s+\S+)?)\s+(?:đến|đi|sang|vào|ra|về|vô)\s+(\S+(?:\s+\S+)?)",
+        # Direction-aware: "bay nam ra bắc" / "bay hn vô sg" / "bay bắc vào nam"
+        r"(?:bay|đi)\s+(\S+(?:\s+\S+)?)\s+(?:ra|vào|về|vô)\s+(\S+(?:\s+\S+)?)",
+        # Reversed: "đi SG từ HN" / "đi sg từ hn"
+        r"đi\s+(\S+(?:\s+\S+)?)\s+từ\s+(\S+(?:\s+\S+)?)",
+        # "HN -> SG" / "HN→SG" (arrow, no-space or with space) / "HN - SG" / "HN — SG"
+        r"(\S+)\s*(?:=>|->|→|—|-)\s*(\S+)",
+        # "vé HN đi SG" / "vé từ HN sang SG"
+        r"vé\s+(?:từ\s+)?(\S+(?:\s+\S+)?)\s+(?:đi|đến|sang|vào|ra|về|vô)\s+(\S+(?:\s+\S+)?)",
+    ]
+    for pat in od_patterns:
+        m = re.search(pat, combined)
+        if m:
+            params["from"] = _AIRPORT_ALIAS.get(m.group(1).strip(), m.group(1).strip().upper()[:3])
+            params["to"] = _AIRPORT_ALIAS.get(m.group(2).strip(), m.group(2).strip().upper()[:3])
+            break
+
+    # Date extraction
+    today = datetime.now()
+    date_pats = [
+        r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?",
+        r"ngày\s+(\d{1,2})\s*(?:tháng\s*)?(\d{1,2})",
+        r"(thứ \d\s*(?:tuần sau)|hôm nay|mai|ngày mai|mốt|ngày mốt|cuối tuần)",
+    ]
+    for pat in date_pats:
+        m = re.search(pat, combined)
+        if m:
+            if len(m.groups()) >= 2 and m.group(2) is not None:
+                d = int(m.group(1)); mo = int(m.group(2))
+                yr = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else today.year
+                if yr < 100: yr += 2000
+                params["date"] = f"{d:02d}{mo:02d}{yr}"
+            else:
+                raw = m.group(1)
+                if raw in ("hôm nay", "today"):
+                    params["date"] = today.strftime("%d%m%Y")
+                elif raw in ("mai", "ngày mai", "tomorrow"):
+                    dt = today + timedelta(days=1)
+                    params["date"] = dt.strftime("%d%m%Y")
+                elif raw in ("mốt", "ngày mốt"):
+                    dt = today + timedelta(days=2)
+                    params["date"] = dt.strftime("%d%m%Y")
+                elif raw == "cuối tuần":
+                    # Next Saturday
+                    days_ahead = 5 - today.weekday()  # Mon=0, Sat=5
+                    if days_ahead <= 0: days_ahead += 7
+                    dt = today + timedelta(days=days_ahead)
+                    params["date"] = dt.strftime("%d%m%Y")
+                elif "thứ" in raw and "tuần sau" in raw:
+                    # "thứ 6 tuần sau"
+                    wd = int(re.search(r"thứ (\d)", raw).group(1))
+                    # weekday: Mon=0 -> thứ 2=0, thứ 3=1,... chủ nhật=6
+                    target = wd - 2 if wd > 1 else 6  # thứ 2->0, thứ 3->1..., chủ nhật(thứ 8/chủ nhật)->6
+                    if target < 0: target = 0
+                    days_until = (target - today.weekday()) % 7 + 7  # next week
+                    dt = today + timedelta(days=days_until)
+                    params["date"] = dt.strftime("%d%m%Y")
+            break
+
+    # Pax count
+    pax_m = re.search(r"(\d+)\s*(?:người|khách|pax|ng)", combined)
+    if pax_m:
+        params["adt"] = int(pax_m.group(1))
+
+    # Validate
+    if params["from"] and params["to"] and params["date"]:
+        return params
+    return None
+
+
+def _format_flight_results(data: dict, params: dict) -> str:
+    """Format AGT SearchFlight response to display text."""
+    if not data.get("Success"):
+        msg = data.get("Message", "Không tìm thấy chuyến bay phù hợp")
+        return f"❌ {msg}"
+
+    list_group = data.get("ListGroup", [])
+    if not list_group:
+        return "❌ Không có chuyến bay nào cho hành trình này."
+
+    _d = params.get("date", "")
+    _date_disp = f"{_d[:2]}/{_d[2:4]}/{_d[4:]}" if len(_d) == 8 else _d
+    lines = [f"✈️ **{params['from']} → {params['to']}** | {_date_disp} | {params['adt']} khách\n"]
+
+    shown = 0
+    for grp in list_group:
+        air_options = grp.get("ListAirOption", [])
+        if not air_options:
+            continue
+        for ao in air_options:
+            airline = ao.get("Airline", "?")
+            # Get flight info from first flight option
+            flt_opts = ao.get("ListFlightOption", [])
+            flt_info = ""
+            if flt_opts:
+                flts = flt_opts[0].get("ListFlight", [])
+                if flts:
+                    f0 = flts[0]
+                    fn = f0.get("FlightNumber", "?")
+                    start = (f0.get("StartDate") or "")[-4:]  # HHMM
+                    end = (f0.get("EndDate") or "")[-4:]
+                    flt_info = f"{airline}{fn} {start}→{end}"
+
+            fare_opts = ao.get("ListFareOption", [])
+            if not fare_opts:
+                continue
+            cheapest = fare_opts[0]
+            price = cheapest.get("TotalFare", 0)
+            family = cheapest.get("FareFamily", "")
+            cabin = cheapest.get("CabinName", "")
+            avail = cheapest.get("Availability", 0)
+
+            if flt_info:
+                lines.append(f"🏷 {flt_info}")
+            lines.append(f"  💰 {price:,.0f}đ | {family} ({cabin}) | còn {avail} chỗ")
+
+            # Show 2nd fare if exists (different class)
+            if len(fare_opts) > 1:
+                f1 = fare_opts[1]
+                if f1.get("CabinName") != cabin:
+                    lines.append(f"  💰 {f1.get('TotalFare', 0):,.0f}đ | {f1.get('FareFamily', '')} ({f1.get('CabinName', '')}) | còn {f1.get('Availability', 0)} chỗ")
+
+            lines.append("")
+            shown += 1
+            if shown >= 10:
+                break
+        if shown >= 10:
+            break
+
+    if not shown:
+        lines.append("_(không có option vé nào)_")
+
+    lines.append("\n📌 Chọn chuyến để giữ chỗ — tôi sẽ hỗ trợ đặt vé.")
+    return "\n".join(lines)
+
+
+# ────────────────────────────────────────────────────────────────────
 # 9. Chat AI — LLM-powered với Gemini 2.5 Flash streaming
 # ────────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
 async def smart_chat(req: ChatRequest):
-    """Chat với AI — dùng Gemini 2.5 Flash thật, streaming response."""
+    """Chat với AI — dùng Gemini 2.5 Flash + RAG Antigravity, streaming response."""
     sid = req.session_id or str(uuid.uuid4())
 
     # Get or init session
@@ -616,89 +834,48 @@ async def smart_chat(req: ChatRequest):
 
     today = datetime.now().strftime("%d/%m/%Y")
 
+    # ── Antigravity decision node ──────────────────────────────────────
+    is_ops = is_operational_query(req.message)
+    rag_context = ""
+    if is_ops:
+        try:
+            rag = get_rag_service()
+            if rag and rag._ready:
+                rag_context = rag.format_context(req.message, top_k=5)
+                if rag_context:
+                    logger.info("RAG context injected for: %.80s...", req.message)
+        except Exception as e:
+            logger.warning("RAG lookup failed (proceeding without): %s", e)
+
     try:
         # Try Gemini 2.5 Flash
         gemini_key = os.getenv("GEMINI_API_KEY", "")
         if gemini_key:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                system_prompt = f"""Bạn là một Ticketing Manager cấp cao + chuyên gia hàng không (Aviation Expert) của Smart Agent — phòng vé AI thế hệ mới. Hôm nay: {today}
 
-Bạn có KIẾN THỨC CHUYÊN SÂU như 1 nhân viên hàng không lâu năm + 1 trùm ticketing. Trả lời như 1 chuyên gia thực thụ: tự nhiên, chính xác, đi thẳng vấn đề, không giải thích lan man.
+                # ── Dynamic system prompt ───────────────────────────────
+                if rag_context:
+                    system_prompt = f"""Bạn là Ticketing Manager + chuyên gia hàng không của Smart Agent. Hôm nay: {today}
 
-===== KIẾN THỨC NỀN (DOMAIN EXPERTISE) =====
+{rag_context}
 
-### I. MÃ IATA & HÃNG HÀNG KHÔNG VIỆT NAM
-- VN = Vietnam Airlines (full-service, hub: HAN/SGN)
-- VJ = Vietjet Air (LCC, hub: SGN/HAN)
-- QH = Bamboo Airways (hybrid, hub: HAN)
-- VU = Vietravel Airlines (LCC, hub: SGN)
-- 9G = Sun PhuQuoc Airways (full-service, hub: PQC/SGN/HAN)
-  * 9G là full-service: xách tay 7kg + ký gửi 23kg ĐÃ BAO GỒM trong giá vé
-  * Khác LCC (VJ/QH/VU) — phải mua thêm hành lý
+===== PHONG CÁCH =====
+- Xưng "tôi", gọi khách "bạn/anh/chị"
+- Dùng THÔNG TIN TRA CỨU ở trên để trả lời CHÍNH XÁC, không bịa
+- Nói chuyện như thằng em trong nghề: chân thành, đi thẳng
+- Không dùng bảng biểu — dùng bullet list
+- Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
+                else:
+                    # Booking flow — lean prompt, LLM extracts: from/to/date/pax → forward to flight search
+                    system_prompt = f"""Bạn là Ticketing Manager của Smart Agent — phòng vé AI. Hôm nay: {today}
 
-### II. THỦ TỤC CHECK-IN
-- Online: 24h-1h trước giờ bay (VN, VJ, QH), 12h-1h (9G)
-- Quầy: mở 3h trước, đóng 40p (domestic), 50p (quốc tế)
-- Lên tàu: đóng cửa 15-20p trước giờ bay
-- Domestic: CMND/CCCD hoặc passport
-- Quốc tế: Passport + visa (nếu cần)
-- Trẻ em 2-12: 75% người lớn. Dưới 2: 10% người lớn (ko ghế riêng)
-
-### III. HÀNH LÝ (BAGGAGE ALLOWANCE)
-- VN Economy: 1 kiện 23kg + xách tay 7kg
-- VN Business: 2 kiện 32kg + xách tay 14kg
-- VJ (LCC): xách tay 7kg. Ký gửi mua thêm (15-32kg)
-- QH Eco: 1 kiện 23kg + xách tay 7kg
-- 9G full-service: xách tay 7kg + ký gửi 23kg (đã bao gồm)
-- Quốc tế VN: Economy = 2 kiện 23kg (US/EU/AU/NZ) hoặc 1 kiện 30kg (Asia)
-- Pin dự phòng PHẢI xách tay, vật sắc nhọn PHẢI ký gửi
-
-### IV. FARE RULES & ĐẶT VÉ
-- Booking class: Y/B/M/H/Q/V/W (Economy), J/C/D/I/Z (Business)
-- Thời gian mở bán: 330 ngày (VN), 360 ngày (VJ), 180 ngày (QH)
-- Giờ vàng: 0h-6h và Thứ 3-5 (giá rẻ nhất)
-- Peak season: Tết (30 ngày trước/sau), 30/4-1/5, 2/9
-- Đặt vé: cần đúng tên CMND/passport, KHÔNG SAI 1 KÝ TỰ
-- Đổi tên: VN = 0-400K, VJ = MIỄN ĐỔI (mua vé mới)
-- Hủy vé: VN = mất 50-100%, VJ = mất 100%
-- Đổi ngày: VN = phí chênh + 200-500K, VJ = ko đổi được
-- No-show: ko check-in → hủy ngang (có thể charge full)
-
-### V. GIÁ VÉ & TICKETING HACKS
-- Vé đoàn (10+): giảm 5-15% tùy hãng
-- Đặt 1 chiều rẻ hơn khứ hồi trên 1 số tuyến LCC
-- Giá ẩn: hạng thấp nhất (Class V/W) chỉ mở 10-20% ghế
-- Book sớm: 60-90 ngày trước = rẻ nhất (trừ Tết)
-- Book sát giờ: VJ có thể giảm sâu 0h-6h (xoá tồn)
-
-### VI. SÂN BAY NỘI BÀI (HAN)
-- Ga 1 (T1) = domestic (VJ, QH, VU, 9G)
-- Ga 2 (T2) = international (VN quốc tế + hãng nước ngoài)
-- Fast Track: cả ga T1+T2, onsite 24/7 — ĐỘC QUYỀN
-- Phụ thu đêm 23:00-06:00 = +200K/người
-- Transit: quốc tế→nội địa tối thiểu 2h, nội địa→nội địa 45p
-
-### VII. DỊCH VỤ SMART AGENT
-1. ✈️ Vé máy bay: AGT Cấp 1, giữ chỗ 24h
-2. ⚡ Fast Track Nội Bài: 450K / VIP Lounge 650K. Onsite 24/7
-3. 📱 eSIM du lịch: 99K-499K. QR tự động
-4. 🛂 Visa: tư vấn + hỗ trợ hồ sơ
-5. 📄 Hộ chiếu: tư vấn online
-
-### VIII. GÓI CTV
-- Free: 8% hoa hồng, 50 vé/tháng
-- Pro 199K/tháng: 12%, 300 vé/tháng
-- White-label 1.5tr/tháng: 15%, không giới hạn
+Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm đi, điểm đến, ngày bay, số khách, hạng vé (nếu có). Đáp tự nhiên, thân thiện. Nếu thiếu thông tin thì hỏi lại nhẹ nhàng.
 
 ===== PHONG CÁCH =====
 - Xưng "tôi", gọi khách "bạn/anh/chị"
 - Nói chuyện như thằng em trong nghề: chân thành, đi thẳng
-- Với khách lẻ: tư vấn tận tình
-- Với CTV/đại lý: nói chuyện đồng nghiệp
-- Khi hỏi "hàng" — mặc định kiểm tra vé, ko hỏi lại
-- Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu
-- KHÔNG dùng bảng biểu — dùng bullet list
-- KHÔNG giải thích dài dòng — nói đúng trọng tâm, xong chốt"""
+- Không dùng bảng biểu — dùng bullet list
+- Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
 
                 contents = []
                 for msg in history[-8:]:
@@ -728,17 +905,44 @@ Bạn có KIẾN THỨC CHUYÊN SÂU như 1 nhân viên hàng không lâu năm +
                 data = resp.json()
 
                 candidates = data.get("candidates", [])
+                llm_ok = False
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
-                    text = "".join(p.get("text", "") for p in parts)
-                else:
-                    text = "Xin lỗi, không nhận được phản hồi từ AI."
+                    llm_text = "".join(p.get("text", "") for p in parts)
+                    llm_ok = bool(llm_text)
+                    text = llm_text if llm_ok else ""
 
                 # Store in history
                 history.append({"role": "user", "content": req.message})
                 history.append({"role": "assistant", "content": text})
                 if len(history) > 50:
                     _chat_sessions[sid] = history[-50:]
+
+                # --- AGT flight search for booking flows (not ops) ---
+                if not is_ops:
+                    recent_msgs = [h["content"] for h in history[-8:] if h["role"] == "user"]
+                    fp = _extract_flight_params(recent_msgs)
+                    if fp:
+                        try:
+                            agt_client = ABTripClient()
+                            result = await agt_client.search_flight(
+                                system="",
+                                adt=fp["adt"],
+                                routes=[{
+                                    "StartPoint": fp["from"],
+                                    "EndPoint": fp["to"],
+                                    "DepartDate": fp["date"]
+                                }]
+                            )
+                            flight_text = _format_flight_results(result, fp)
+                            text = flight_text + ("\n" + text if text else "\n\n💬 Cần hỗ trợ gì thêm?")
+                        except Exception as e:
+                            logger.warning("AGT search failed: %s", e)
+                            text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi kết nối AGT: {e})" + ("\n\n" + text if text else "")
+
+                # If LLM failed and no AGT results, use fallback
+                if not text:
+                    text = "Xin chào! Tôi là Smart Agent — trợ lý phòng vé AI.\n\nTôi có thể giúp gì cho bạn hôm nay?\n• ✈️ Đặt vé máy bay\n• ⚡ Fast Track Nội Bài\n• 📱 eSIM du lịch\n• Nói 1 câu, tôi lo hết!"
 
                 # Return SSE-style response
                 return StreamingResponse(
@@ -768,7 +972,43 @@ Bạn có KIẾN THỨC CHUYÊN SÂU như 1 nhân viên hàng không lâu năm +
             "ctv": "💼 **Mở phòng vé CTV** — MIỄN PHÍ!\n\n• Gói Free: Hoa hồng 8%, 50 vé/tháng\n• Gói Pro 199K/tháng: Hoa hồng 12%, 300 vé\n• White-label 1.5tr/tháng: Hoa hồng 15%, không giới hạn\n\nĐăng ký ngay: bấm nút 'Đăng ký CTV' trên web.\n\nBạn muốn tư vấn thêm?",
         }
 
-        text = responses.get(intent, "Xin chào! Tôi là Smart Agent — trợ lý phòng vé AI.\n\nTôi có thể giúp gì cho bạn hôm nay?\n• ✈️ Đặt vé máy bay\n• ⚡ Fast Track Nội Bài\n• 📱 eSIM du lịch\n• 🛂 Visa & Hộ chiếu\n• 💼 Mở phòng vé CTV\n\nNói 1 câu, tôi lo hết!")
+        if is_ops:
+            try:
+                rag = get_rag_service()
+                if rag and rag._ready:
+                    rag_context = rag.format_context(req.message, top_k=3)
+                    if rag_context:
+                        text = f"📚 **Tra cứu:**\n\n{rag_context}\n\n_(Chế độ offline — tra cứu từ CSDL nội bộ)_"
+                    else:
+                        text = "Không tìm thấy thông tin phù hợp trong CSDL."
+                else:
+                    text = "Hệ thống tra cứu chưa sẵn sàng."
+            except Exception as e:
+                logger.error("RAG fallback error: %s", e)
+                text = "Không thể tra cứu lúc này."
+        else:
+            # Booking flow: try AGT search first (no LLM needed)
+            recent_msgs = [req.message]
+            fp = _extract_flight_params(recent_msgs)
+            if fp:
+                try:
+                    agt_client = ABTripClient()
+                    result = await agt_client.search_flight(
+                        system="",
+                        adt=fp["adt"],
+                        routes=[{
+                            "StartPoint": fp["from"],
+                            "EndPoint": fp["to"],
+                            "DepartDate": fp["date"]
+                        }]
+                    )
+                    flight_text = _format_flight_results(result, fp)
+                    text = flight_text + "\n\n💬 Cần hỗ trợ gì thêm?"
+                except Exception as e:
+                    logger.warning("AGT search failed: %s", e)
+                    text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi: {e})\n\nVui lòng thử lại sau."
+            else:
+                text = responses.get(intent, "Xin chào! Tôi là Smart Agent — trợ lý phòng vé AI.\n\nTôi có thể giúp gì cho bạn hôm nay?\n• ✈️ Đặt vé máy bay\n• ⚡ Fast Track Nội Bài\n• 📱 eSIM du lịch\n• 🛂 Visa & Hộ chiếu\n• 💼 Mở phòng vé CTV\n\nNói 1 câu, tôi lo hết!")
         history.append({"role": "user", "content": req.message})
         history.append({"role": "assistant", "content": text})
         if len(history) > 50:

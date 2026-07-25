@@ -35,6 +35,21 @@ JWT_ALGORITHM = "HS256"
 # Security scheme for Swagger docs
 security = HTTPBearer(auto_error=False)
 
+# Singleton engine for API key DB lookups (lazy init)
+_api_key_engine = None
+
+
+def _get_api_key_engine():
+    """Return a singleton async engine for API key lookups."""
+    global _api_key_engine
+    if _api_key_engine is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+        _db_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+        os.makedirs(_db_dir, exist_ok=True)
+        _db_url = f"sqlite+aiosqlite:///{os.path.join(_db_dir, 'smart_agent.db')}"
+        _api_key_engine = create_async_engine(_db_url, echo=False)
+    return _api_key_engine
+
 
 # ---------------------------------------------------------------------------
 # JWT token verification
@@ -141,13 +156,36 @@ async def get_current_user_or_api_key(
         except JWTError:
             pass  # Fall through to API key check
 
-    # Try API key
+    # Try API key — resolve tenant_id from DB
     api_key = request.headers.get("X-API-Key")
     if api_key:
-        return {
-            "api_key": api_key,
-            "auth_method": "api_key",
-        }
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker as _async_sessionmaker
+
+        _engine = _get_api_key_engine()
+        _session_factory = _async_sessionmaker(_engine, expire_on_commit=False)
+
+        async with _session_factory() as session:
+            try:
+                result = await session.execute(
+                    text("SELECT id, agent_tier FROM sa_tenants WHERE api_key = :key"),
+                    {"key": api_key},
+                )
+                row = result.fetchone()
+                if row:
+                    return {
+                        "tenant_id": row[0],
+                        "api_key": api_key,
+                        "tier": row[1] or "free",
+                        "auth_method": "api_key",
+                    }
+                raise HTTPException(401, "API key không hợp lệ.")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning("API key DB lookup failed: %s", str(e))
+                raise HTTPException(401, "API key không hợp lệ.")
 
     raise HTTPException(
         status_code=401,

@@ -2,6 +2,7 @@
 Booking-related API routes.
 
 Wraps AGT API endpoints: SearchFlight, BookFlight, IssueTicket, RetrieveBooking.
+All endpoints require JWT or API-key authentication.
 """
 
 from __future__ import annotations
@@ -9,7 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from app.middleware.auth_middleware import get_current_user_or_api_key
 from app.services.abtrip_client import get_client
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,10 @@ router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 # ---------------------------------------------------------------------------
 
 @router.post("/search")
-async def search_flights(body: dict[str, Any]) -> dict[str, Any]:
+async def search_flights(
+    body: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+) -> dict[str, Any]:
     """
     Search for flights.
 
@@ -58,7 +63,10 @@ async def search_flights(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.post("/book")
-async def book_flight(body: dict[str, Any]) -> dict[str, Any]:
+async def book_flight(
+    body: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+) -> dict[str, Any]:
     """
     Book a flight.
 
@@ -100,7 +108,10 @@ async def book_flight(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.post("/issue-ticket")
-async def issue_ticket(body: dict[str, Any]) -> dict[str, Any]:
+async def issue_ticket(
+    body: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+) -> dict[str, Any]:
     """
     Issue a ticket for a booked flight.
 
@@ -130,7 +141,10 @@ async def issue_ticket(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/{code}")
-async def retrieve_booking(code: str) -> dict[str, Any]:
+async def retrieve_booking(
+    code: str,
+    user: dict[str, Any] = Depends(get_current_user_or_api_key),
+) -> dict[str, Any]:
     """
     Retrieve booking details by booking code.
 
