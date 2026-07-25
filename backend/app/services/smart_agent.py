@@ -16,7 +16,7 @@ import asyncio
 import uuid
 from datetime import datetime, date, timedelta
 
-from app.services.rag_service import get_rag_service, init_rag, is_operational_query
+from app.services.rag_service import get_rag_service, init_rag
 from app.services.abtrip_client import ABTripClient
 from decimal import Decimal
 from typing import Optional, List
@@ -834,8 +834,11 @@ async def smart_chat(req: ChatRequest):
 
     today = datetime.now().strftime("%d/%m/%Y")
 
-    # ── Antigravity decision node ──────────────────────────────────────
-    is_ops = is_operational_query(req.message)
+    # ── RAG routing: operational queries (policy, rules, FAQ) hit knowledge base ──
+    ops_keywords = ("hủy", "hoàn", "đổi", "hành lý", "chính sách", "quy định",
+                    "thủ tục", "giấy tờ", "visa", "cách", "làm sao", "bao nhiêu kg",
+                    "phí", "lệ phí", "điều kiện", "yêu cầu", "cần gì")
+    is_ops = any(kw in req.message.lower() for kw in ops_keywords)
     rag_context = ""
     if is_ops:
         try:
