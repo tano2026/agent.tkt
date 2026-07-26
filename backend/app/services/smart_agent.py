@@ -929,40 +929,40 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
         # Store in history
         history.append({"role": "user", "content": req.message})
         history.append({"role": "assistant", "content": text})
-                if len(history) > 50:
-                    _chat_sessions[sid] = history[-50:]
+        if len(history) > 50:
+            _chat_sessions[sid] = history[-50:]
 
-                # --- AGT flight search for booking flows (not ops) ---
-                if not is_ops:
-                    recent_msgs = [h["content"] for h in history[-8:] if h["role"] == "user"]
-                    fp = _extract_flight_params(recent_msgs)
-                    if fp:
-                        try:
-                            agt_client = ABTripClient()
-                            result = await agt_client.search_flight(
-                                system="",
-                                adt=fp["adt"],
-                                routes=[{
-                                    "StartPoint": fp["from"],
-                                    "EndPoint": fp["to"],
-                                    "DepartDate": fp["date"]
-                                }]
-                            )
-                            flight_text = _format_flight_results(result, fp)
-                            text = flight_text + ("\n" + text if text else "\n\n💬 Cần hỗ trợ gì thêm?")
-                        except Exception as e:
-                            logger.warning("AGT search failed: %s", e)
-                            text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi kết nối AGT: {e})" + ("\n\n" + text if text else "")
+        # --- AGT flight search for booking flows (not ops) ---
+        if not is_ops:
+            recent_msgs = [h["content"] for h in history[-8:] if h["role"] == "user"]
+            fp = _extract_flight_params(recent_msgs)
+            if fp:
+                try:
+                    agt_client = ABTripClient()
+                    result = await agt_client.search_flight(
+                        system="",
+                        adt=fp["adt"],
+                        routes=[{
+                            "StartPoint": fp["from"],
+                            "EndPoint": fp["to"],
+                            "DepartDate": fp["date"]
+                        }]
+                    )
+                    flight_text = _format_flight_results(result, fp)
+                    text = flight_text + ("\n" + text if text else "\n\n💬 Cần hỗ trợ gì thêm?")
+                except Exception as e:
+                    logger.warning("AGT search failed: %s", e)
+                    text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi kết nối AGT: {e})" + ("\n\n" + text if text else "")
 
-                # If LLM failed and no AGT results, use fallback
-                if not text:
-                    text = "Xin chào! Tôi là Smart Agent — trợ lý phòng vé AI.\n\nTôi có thể giúp gì cho bạn hôm nay?\n• ✈️ Đặt vé máy bay\n• ⚡ Fast Track Nội Bài\n• 📱 eSIM du lịch\n• Nói 1 câu, tôi lo hết!"
+        # If LLM failed and no AGT results, use fallback
+        if not text:
+            text = "Xin chào! Tôi là Smart Agent — trợ lý phòng vé AI.\n\nTôi có thể giúp gì cho bạn hôm nay?\n• ✈️ Đặt vé máy bay\n• ⚡ Fast Track Nội Bài\n• 📱 eSIM du lịch\n• Nói 1 câu, tôi lo hết!"
 
-                # Return SSE-style response
-                return StreamingResponse(
-                    _sse_stream(text, sid),
-                    media_type="text/event-stream",
-                )
+        # Return SSE-style response
+        return StreamingResponse(
+            _sse_stream(text, sid),
+            media_type="text/event-stream",
+        )
 
         # Fallback: rule-based responses
         msg_lower = req.message.lower()
