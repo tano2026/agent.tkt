@@ -177,14 +177,15 @@ class LLMGateway:
 
         tools = [t.model_dump(exclude_none=True) for t in AVAILABLE_TOOLS]
 
+        model_name = os.getenv("OPENAI_MODEL", "google/gemma-2-9b-it:free")
         payload = {
-            "model": "oc/deepseek-v4-flash-free",  # DeepSeek via 9Router/OmniRoute
+            "model": model_name,
             "messages": messages,
             "tools": tools,
             "tool_choice": "auto",
             "temperature": 0.3,
             "max_tokens": 2048,
-            "stream": False,  # Force JSON response (OmniRoute defaults to SSE)
+            "stream": False,  # Force JSON response
         }
 
         resp = await self._http_client.post(
