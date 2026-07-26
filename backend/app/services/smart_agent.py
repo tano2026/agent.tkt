@@ -704,7 +704,7 @@ def _extract_flight_params(texts: list[str]) -> dict | None:
     date_pats = [
         r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?",
         r"ngày\s+(\d{1,2})\s*(?:tháng\s*)?(\d{1,2})",
-        r"(thứ \d\s*(?:tuần sau)|hôm nay|mai|ngày mai|mốt|ngày mốt|cuối tuần)",
+        r"(thứ \d\s*(?:tuần sau)|hôm nay|mai|ngày mai|mốt|ngày mốt|kia|ngày kia|cuối tuần)",
     ]
     for pat in date_pats:
         m = re.search(pat, combined)
@@ -721,7 +721,7 @@ def _extract_flight_params(texts: list[str]) -> dict | None:
                 elif raw in ("mai", "ngày mai", "tomorrow"):
                     dt = today + timedelta(days=1)
                     params["date"] = dt.strftime("%d%m%Y")
-                elif raw in ("mốt", "ngày mốt"):
+                elif raw in ("mốt", "ngày mốt", "kia", "ngày kia"):
                     dt = today + timedelta(days=2)
                     params["date"] = dt.strftime("%d%m%Y")
                 elif raw == "cuối tuần":
