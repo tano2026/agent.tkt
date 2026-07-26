@@ -2,7 +2,7 @@
 import sys, os
 sys.dont_write_bytecode = True
 
-PORT = int(os.environ.get("PORT", 8137))
+PORT = int(os.environ.get("PORT", 8767))
 
 # Import app directly first (ensures fresh imports)
 from app.main import app

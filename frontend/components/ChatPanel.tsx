@@ -29,7 +29,7 @@ async function sendChat(message: string, agent: Agent, sessionId: string): Promi
   suggestions?: string[];
   session_id?: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const res = await fetch(`${API_BASE}/api/smart-agent/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, agent, session_id: sessionId }),
