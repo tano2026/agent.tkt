@@ -322,7 +322,7 @@ export default function ChatBot() {
       'hà nội': 'HAN', 'ha noi': 'HAN', 'hanoi': 'HAN',
       'sài gòn': 'SGN', 'saigon': 'SGN', 'sai gon': 'SGN', 'hồ chí minh': 'SGN', 'ho chi minh': 'SGN', 'hcm': 'SGN',
       'đà nẵng': 'DAD', 'da nang': 'DAD', 'danang': 'DAD',
-      'nha trang': 'CXR', 'nhatrang': 'CXR', 'nha trang': 'CXR',
+      'nha trang': 'CXR', 'nhatrang': 'CXR',
       'vinh': 'VII',
       'huế': 'HUI', 'hue': 'HUI',
       'phú quốc': 'PQC', 'phu quoc': 'PQC',
