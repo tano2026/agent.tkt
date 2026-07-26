@@ -851,14 +851,9 @@ async def smart_chat(req: ChatRequest):
             logger.warning("RAG lookup failed (proceeding without): %s", e)
 
     try:
-        # Try Gemini 2.5 Flash
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if gemini_key:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-
-                # ── Dynamic system prompt ───────────────────────────────
-                if rag_context:
-                    system_prompt = f"""Bạn là Ticketing Manager + chuyên gia hàng không của Smart Agent. Hôm nay: {today}
+        # ── Dynamic system prompt ───────────────────────────────
+        if rag_context:
+            system_prompt = f"""Bạn là Ticketing Manager + chuyên gia hàng không của Smart Agent. Hôm nay: {today}
 
 {rag_context}
 
@@ -868,9 +863,9 @@ async def smart_chat(req: ChatRequest):
 - Nói chuyện như thằng em trong nghề: chân thành, đi thẳng
 - Không dùng bảng biểu — dùng bullet list
 - Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
-                else:
-                    # Booking flow — lean prompt, LLM extracts: from/to/date/pax → forward to flight search
-                    system_prompt = f"""Bạn là Ticketing Manager của Smart Agent — phòng vé AI. Hôm nay: {today}
+        else:
+            # Booking flow — lean prompt, LLM extracts: from/to/date/pax → forward to flight search
+            system_prompt = f"""Bạn là Ticketing Manager của Smart Agent — phòng vé AI. Hôm nay: {today}
 
 Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm đi, điểm đến, ngày bay, số khách, hạng vé (nếu có). Đáp tự nhiên, thân thiện. Nếu thiếu thông tin thì hỏi lại nhẹ nhàng.
 
@@ -880,6 +875,12 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
 - Không dùng bảng biểu — dùng bullet list
 - Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
 
+        # Try Gemini 2.5 Flash
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        llm_ok = False
+        text = ""
+        if gemini_key:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 contents = []
                 for msg in history[-8:]:
                     role = "model" if msg.get("role") == "assistant" else "user"
@@ -898,26 +899,36 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
 
                 url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
                 resp = await client.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {gemini_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload
-        )
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {gemini_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload
+                )
                 data = resp.json()
 
                 candidates = data.get("candidates", [])
-                llm_ok = False
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
                     llm_text = "".join(p.get("text", "") for p in parts)
                     llm_ok = bool(llm_text)
                     text = llm_text if llm_ok else ""
+        else:
+            # Fallback to LLM Gateway (OmniRoute / OpenRouter)
+            from app.services.llm_gateway import get_llm
+            llm = get_llm()
+            llm_history = []
+            for msg in history[-8:]:
+                llm_history.append({"role": msg.get("role"), "content": msg.get("content", "")})
+            
+            resp_obj = await llm.chat(req.message, history=llm_history, system_override=system_prompt)
+            text = resp_obj.content if resp_obj.type in ("text", "tool_call") else ""
+            llm_ok = bool(text)
 
-                # Store in history
-                history.append({"role": "user", "content": req.message})
-                history.append({"role": "assistant", "content": text})
+        # Store in history
+        history.append({"role": "user", "content": req.message})
+        history.append({"role": "assistant", "content": text})
                 if len(history) > 50:
                     _chat_sessions[sid] = history[-50:]
 
