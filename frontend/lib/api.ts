@@ -91,6 +91,16 @@ export async function bookFlight(params: BookParams): Promise<any> {
   return res.json();
 }
 
+export async function issueTicket(bookingCode: string): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/bookings/issue-ticket`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ BookingCode: bookingCode }),
+  });
+  if (!res.ok) throw new Error(`Ticket issuance failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getChatHistory(sessionId: string): Promise<Message[]> {
   const res = await fetch(`${BACKEND_URL}/api/chat/history/${sessionId}`);
   if (!res.ok) return [];
