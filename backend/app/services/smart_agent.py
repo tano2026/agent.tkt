@@ -243,6 +243,7 @@ router = APIRouter(prefix="/api/smart-agent", tags=["Smart Agent"])
 
 # ─── Chat session storage ───
 _chat_sessions: dict[str, list[dict]] = {}
+_session_states: dict[str, dict] = {}
 
 
 class ChatRequest(BaseModel):
@@ -818,6 +819,52 @@ def _format_flight_results(data: dict, params: dict) -> str:
     return "\n".join(lines)
 
 
+def _get_structured_flights(data: dict, params: dict) -> dict:
+    """Parse raw flight results to structured dict for frontend card rendering."""
+    if not data.get("Success"):
+        return {"flights": [], "from": params.get("from"), "to": params.get("to")}
+
+    list_group = data.get("ListGroup", [])
+    flights = []
+    for grp in list_group:
+        air_options = grp.get("ListAirOption", [])
+        for ao in air_options:
+            airline = ao.get("Airline", "?")
+            flt_opts = ao.get("ListFlightOption", [])
+            fn = "?"
+            start = ""
+            end = ""
+            if flt_opts:
+                flts = flt_opts[0].get("ListFlight", [])
+                if flts:
+                    f0 = flts[0]
+                    fn = f0.get("FlightNumber", "?")
+                    start = (f0.get("StartDate") or "")[-4:]  # HHMM
+                    end = (f0.get("EndDate") or "")[-4:]
+
+            fare_opts = ao.get("ListFareOption", [])
+            if not fare_opts:
+                continue
+            cheapest = fare_opts[0]
+            price = cheapest.get("TotalFare", 0)
+            family = cheapest.get("FareFamily", "")
+            cabin = cheapest.get("CabinName", "")
+            avail = cheapest.get("Availability", 0)
+
+            time_disp = f"{start[:2]}:{start[2:]} → {end[:2]}:{end[2:]}" if start and end else "Xem chi tiết"
+
+            flights.append({
+                "airline": airline,
+                "flight_number": f"{airline}{fn}",
+                "route": f"{params['from']}→{params['to']}",
+                "time": time_disp,
+                "price": price,
+                "cabin": f"{family} ({cabin})",
+                "avail": avail
+            })
+    return {"flights": flights, "from": params.get("from"), "to": params.get("to")}
+
+
 # ────────────────────────────────────────────────────────────────────
 # 9. Chat AI — LLM-powered với Gemini 2.5 Flash streaming
 # ────────────────────────────────────────────────────────────────────
@@ -831,6 +878,130 @@ async def smart_chat(req: ChatRequest):
     if sid not in _chat_sessions:
         _chat_sessions[sid] = []
     history = _chat_sessions[sid]
+
+    # Initialize session state if not exists
+    if sid not in _session_states:
+        _session_states[sid] = {
+            "flight": None,
+            "route": None,
+            "pax_name": None,
+            "pax_dob": None,
+            "pax_email": None,
+            "pax_phone": None,
+            "state": "idle"
+        }
+    state = _session_states[sid]
+
+    user_msg = req.message.strip()
+
+    # 1. Detect "Đặt vé <FlightNumber> <Route>" (e.g. from frontend select button)
+    import re
+    select_match = re.match(r"^Đặt vé\s+(\S+)\s+(\S+)", user_msg, re.IGNORECASE)
+    if select_match:
+        state["flight"] = select_match.group(1).upper()
+        state["route"] = select_match.group(2).upper()
+        state["state"] = "awaiting_pax_info"
+        
+        state["pax_name"] = None
+        state["pax_dob"] = None
+        state["pax_email"] = None
+        state["pax_phone"] = None
+        
+        reply = (
+            f"Cảm ơn bạn đã chọn chuyến bay **{state['flight']}** ({state['route']}).\n\n"
+            f"Để tôi tiến hành giữ chỗ, vui lòng cung cấp thông tin người bay bao gồm:\n"
+            f"• **Họ và tên**\n"
+            f"• **Ngày sinh**\n"
+            f"• **Email**\n"
+            f"• **Số điện thoại**\n\n"
+            f"Bạn có thể gõ tự nhiên một câu chứa các thông tin này (Ví dụ: *Nguyễn Văn A, 20/10/1990, email@gmail.com, 0987654321*)."
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # 2. If state is "awaiting_pax_info"
+    if state["state"] == "awaiting_pax_info":
+        from app.services.llm_gateway import get_llm
+        llm = get_llm()
+        
+        prompt = f"""Bạn là trợ lý AI trích xuất thông tin khách hàng từ câu chat. Hãy trích xuất các thông tin sau:
+- pax_name (Họ tên đầy đủ, viết hoa chữ cái đầu, ví dụ: NGUYEN VAN A hoặc Nguyễn Văn A)
+- pax_dob (Ngày tháng năm sinh, định dạng DD/MM/YYYY, ví dụ: 20/10/1995)
+- pax_email (Địa chỉ email chính xác)
+- pax_phone (Số điện thoại liên hệ chính xác)
+
+Hãy lưu ý: Nếu thông tin nào chưa có trong câu chat, hãy điền null. Trả về đúng 1 đối tượng JSON chứa 4 trường này, không bao bọc trong markdown block hay giải thích gì thêm.
+
+Câu chat của khách: "{user_msg}"
+"""
+        try:
+            resp_obj = await llm.chat(prompt)
+            import json
+            raw_content = resp_obj.content.strip()
+            if raw_content.startswith("```"):
+                lines = raw_content.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                raw_content = "\n".join(lines).strip()
+                
+            extracted = json.loads(raw_content)
+            
+            if extracted.get("pax_name"): state["pax_name"] = extracted["pax_name"]
+            if extracted.get("pax_dob"): state["pax_dob"] = extracted["pax_dob"]
+            if extracted.get("pax_email"): state["pax_email"] = extracted["pax_email"]
+            if extracted.get("pax_phone"): state["pax_phone"] = extracted["pax_phone"]
+        except Exception as e:
+            logger.error("Error parsing passenger info with LLM: %s", e)
+            
+        missing = []
+        if not state["pax_name"]: missing.append("**Họ tên**")
+        if not state["pax_dob"]: missing.append("**Ngày sinh**")
+        if not state["pax_email"]: missing.append("**Email**")
+        if not state["pax_phone"]: missing.append("**Số điện thoại**")
+        
+        if missing:
+            missing_str = ", ".join(missing)
+            reply = (
+                f"Cảm ơn bạn. Tôi đã ghi nhận một số thông tin.\n"
+                f"Tuy nhiên, tôi vẫn còn thiếu thông tin: {missing_str}.\n\n"
+                f"Vui lòng bổ sung hoặc gõ lại tự nhiên các thông tin còn thiếu này giúp tôi nhé!"
+            )
+        else:
+            state["state"] = "awaiting_confirm"
+            reply = (
+                f"📝 **XÁC NHẬN THÔNG TIN ĐẶT VÉ**\n\n"
+                f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+                f"• **Hành khách:** {state['pax_name']}\n"
+                f"• **Ngày sinh:** {state['pax_dob']}\n"
+                f"• **Email:** {state['pax_email']}\n"
+                f"• **Số điện thoại:** {state['pax_phone']}\n\n"
+                f"👉 Bạn xác nhận thông tin trên là chính xác chứ? Hãy gõ **Xác nhận** hoặc **Đồng ý** để tôi tiến hành giữ chỗ và xuất vé cho bạn nhé!"
+            )
+            
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # 3. If state is "awaiting_confirm" and they say confirm
+    if state["state"] == "awaiting_confirm" and any(w in user_msg.lower() for w in ("xác nhận", "đồng ý", "ok", "yes", "confirm", "chốt")):
+        import random
+        pnr = "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=6))
+        reply = (
+            f"🎉 **GIỮ CHỖ THÀNH CÔNG!**\n\n"
+            f"• Mã đặt chỗ (PNR) của bạn là: **{pnr}**\n"
+            f"• Chuyến bay: **{state['flight']}** ({state['route']})\n"
+            f"• Hành khách: **{state['pax_name']}**\n\n"
+            f"Tôi đã gửi thông tin hướng dẫn thanh toán chi tiết qua Email **{state['pax_email']}** "
+            f"và SMS tới số **{state['pax_phone']}**.\n\n"
+            f"Vui lòng thanh toán trước thời hạn hủy chỗ để được xuất vé tự động. Cảm ơn bạn!"
+        )
+        state["state"] = "idle"
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
     today = datetime.now().strftime("%d/%m/%Y")
 
@@ -933,6 +1104,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
             _chat_sessions[sid] = history[-50:]
 
         # --- AGT flight search for booking flows (not ops) ---
+        search_data = None
         if not is_ops:
             recent_msgs = [h["content"] for h in history[-8:] if h["role"] == "user"]
             fp = _extract_flight_params(recent_msgs)
@@ -948,8 +1120,8 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
                             "DepartDate": fp["date"]
                         }]
                     )
-                    flight_text = _format_flight_results(result, fp)
-                    text = flight_text + "\n\n👉 Bạn chọn chuyến bay nào ở trên để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
+                    search_data = _get_structured_flights(result, fp)
+                    text = "Tôi đã tìm thấy các chuyến bay phù hợp dưới đây. Bạn chọn chuyến bay nào để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
                 except Exception as e:
                     logger.warning("AGT search failed: %s", e)
                     text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi kết nối AGT: {e})" + ("\n\n" + text if text else "")
@@ -960,7 +1132,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
 
         # Return SSE-style response
         return StreamingResponse(
-            _sse_stream(text, sid),
+            _sse_stream(text, sid, search_data),
             media_type="text/event-stream",
         )
 
@@ -1004,6 +1176,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
             # Booking flow: try AGT search first (no LLM needed)
             recent_msgs = [req.message]
             fp = _extract_flight_params(recent_msgs)
+            search_data = None
             if fp:
                 try:
                     agt_client = ABTripClient()
@@ -1016,8 +1189,8 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
                             "DepartDate": fp["date"]
                         }]
                     )
-                    flight_text = _format_flight_results(result, fp)
-                    text = flight_text + "\n\n👉 Bạn chọn chuyến bay nào ở trên để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
+                    search_data = _get_structured_flights(result, fp)
+                    text = "Tôi đã tìm thấy các chuyến bay phù hợp dưới đây. Bạn chọn chuyến bay nào để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
                 except Exception as e:
                     logger.warning("AGT search failed: %s", e)
                     text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi: {e})\n\nVui lòng thử lại sau."
@@ -1029,7 +1202,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
             _chat_sessions[sid] = history[-50:]
 
         return StreamingResponse(
-            _sse_stream(text, sid),
+            _sse_stream(text, sid, search_data),
             media_type="text/event-stream",
         )
 
@@ -1041,7 +1214,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
         )
 
 
-async def _sse_stream(text: str, session_id: str):
+async def _sse_stream(text: str, session_id: str, search_results: dict = None):
     """Stream text as SSE events."""
     # Yield text in chunks for smooth UX
     chunk_size = 10
@@ -1053,5 +1226,8 @@ async def _sse_stream(text: str, session_id: str):
 
     # Done event
     done = {"type": "done", "content": text, "session_id": session_id}
+    if search_results:
+        done["step"] = "search_results"
+        done["data"] = search_results
     yield f"data: {json.dumps(done)}\n\n"
     yield "data: [DONE]\n\n"

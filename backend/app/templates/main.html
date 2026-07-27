@@ -692,12 +692,13 @@
             row.className = 'flight-row'
             row.innerHTML = `
                 <div>
-                    <div class="flight-route">${f.airline || 'VJ'} — ${f.route || `${data.from}→${data.to}`}</div>
+                    <div class="flight-route">${f.flight_number || f.airline || 'VJ'} — ${f.route || `${data.from}→${data.to}`}</div>
                     <div class="flight-time">${f.time || 'Xem chi tiết'}</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${f.cabin || ''} | còn ${f.avail || 0} chỗ</div>
                 </div>
                 <div style="text-align:right;">
                     <div class="flight-price">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
-                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''}'')">Đặt ngay</button>
+                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''}')">Chọn</button>
                 </div>
             `
             card.appendChild(row)
