@@ -166,7 +166,7 @@
         .service-icon.fasttrack { background: var(--gold-bg); color: var(--gold-dark); }
         .service-icon.esim { background: var(--teal-bg); color: var(--teal); }
         .service-icon.visa { background: var(--purple-bg); color: var(--purple); }
-        .service-icon.passport { background: var(--red-bg); color: var(--red); }
+        .service-icon.lounge { background: rgba(230, 162, 60, 0.1); color: #e6a23c; }
         .service-name {
             font-size: 12px;
             font-weight: 600;
@@ -471,13 +471,13 @@
                 <div class="service-icon esim"><i class="ri-wifi-line"></i></div>
                 <span class="service-name">eSIM</span>
             </a>
-            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi cần tư vấn visa')">
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi muốn tư vấn Visa / Hộ chiếu')">
                 <div class="service-icon visa"><i class="ri-passport-line"></i></div>
-                <span class="service-name">Visa</span>
+                <span class="service-name">Visa - Hộ chiếu</span>
             </a>
-            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi cần làm hộ chiếu')">
-                <div class="service-icon passport"><i class="ri-file-text-line"></i></div>
-                <span class="service-name">Hộ chiếu</span>
+            <a class="service-item" href="#" onclick="event.preventDefault();sendSuggestion('Tôi muốn đặt phòng chờ thương gia')">
+                <div class="service-icon lounge"><i class="ri-vip-crown-line"></i></div>
+                <span class="service-name">Phòng chờ VIP</span>
             </a>
         </div>
     </div>
@@ -489,13 +489,13 @@
     <div class="welcome" id="welcomeScreen">
         <div class="welcome-icon"><i class="ri-robot-2-line" style="color:#fff;font-size:28px;"></i></div>
         <h1>Nói <span>1 câu</span>,<br>AI lo hết</h1>
-        <p>Đặt vé máy bay, Fast Track, eSIM, Visa, Hộ chiếu — toàn bộ bằng tiếng Việt tự nhiên. Không form, không chọt chọt.</p>
+        <p>Đặt vé máy bay, Fast Track, eSIM, Visa - Hộ chiếu, Phòng chờ VIP — toàn bộ bằng tiếng Việt tự nhiên.</p>
         <div class="suggestions">
             <span class="suggestion-pill" onclick="sendSuggestion('Cho tôi vé SG đi Đà Nẵng cuối tuần này, 2 người lớn')">✈️ SG → Đà Nẵng</span>
             <span class="suggestion-pill" onclick="sendSuggestion('Fast Track Nội Bài sáng mai 8h, 2 người bao nhiêu?')">⚡ Fast Track Nội Bài</span>
             <span class="suggestion-pill" onclick="sendSuggestion('Có eSIM nào cho du lịch Hàn Quốc 7 ngày không?')">📱 eSIM Hàn Quốc</span>
-            <span class="suggestion-pill" onclick="sendSuggestion('Visa Nhật Bản làm thế nào? Tôi ở Hà Nội')">🛂 Visa Nhật Bản</span>
-            <span class="suggestion-pill" onclick="sendSuggestion('Tôi muốn mở phòng vé, cần làm gì?')">💼 Mở phòng vé</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Visa Nhật Bản làm thế nào? Tôi ở Hà Nội')">🛂 Visa - Hộ chiếu</span>
+            <span class="suggestion-pill" onclick="sendSuggestion('Tôi muốn đặt phòng chờ thương gia Nội Bài')">👑 Phòng chờ VIP</span>
         </div>
     </div>
 
@@ -530,7 +530,7 @@
     function scrollToChat() { chatInput.focus() }
 
     function showInfo() {
-        const msg = '🧠 **Smart Agent** — Phòng Vé AI\n\n5 dịch vụ — 1 cuộc trò chuyện:\n✈️ Vé máy bay (AGT Cấp 1)\n⚡ Fast Track Nội Bài 24/7\n📱 eSIM toàn cầu\n🛂 Visa các nước\n📄 Hộ chiếu online\n\nĐăng ký CTV miễn phí — bán vé kiếm hoa hồng.\n\nNói 1 câu, AI lo hết.'
+        const msg = '🧠 **Smart Agent** — Phòng Vé AI\n\n5 dịch vụ — 1 cuộc trò chuyện:\n✈️ Vé máy bay (AGT Cấp 1)\n⚡ Fast Track Nội Bài 24/7\n📱 eSIM toàn cầu\n🛂 Visa - Hộ chiếu nhanh\n👑 Phòng chờ VIP sân bay\n\nĐăng ký CTV miễn phí — bán vé kiếm hoa hồng.\n\nNói 1 câu, AI lo hết.'
         alert(msg.replace(/\*\*/g, '').replace(/•/g, '-'))
     }
 
