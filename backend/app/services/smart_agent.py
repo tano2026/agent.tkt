@@ -956,31 +956,40 @@ async def smart_chat(req: ChatRequest):
         state["esim_days"] = None
         state["esim_package"] = None
         
-        # Check if they specified an unsupported country
-        unsupported_country = None
-        for uc in ("Úc", "Australia", "Đài Loan", "Canada", "Nga", "Anh", "Pháp", "Đức", "Ấn Độ", "Hồng Kông"):
-            if uc.lower() in user_msg.lower():
-                unsupported_country = uc
-                break
+        # 15-20 popular countries / mapping dictionary to map to actual eSIM regions
+        COUNTRY_MAPPING = {
+            "hàn quốc": "Hàn Quốc", "korea": "Hàn Quốc",
+            "nhật bản": "Nhật Bản", "japan": "Nhật Bản",
+            "thái lan": "Thái Lan", "thailand": "Thái Lan",
+            "singapore": "Singapore",
+            "malaysia": "Malaysia",
+            "campuchia": "Campuchia", "lào": "Lào",
+            "đông nam á": "Đông Nam Á", "sea": "Đông Nam Á",
+            "trung quốc": "Trung Quốc", "china": "Trung Quốc",
+            "hồng kông": "Hồng Kông", "hong kong": "Hồng Kông", "macau": "Macau", "ma cao": "Macau",
+            "mỹ": "Mỹ", "usa": "Mỹ", "hoa kỳ": "Mỹ",
+            "canada": "Canada",
+            "châu âu": "Châu Âu", "pháp": "Pháp", "đức": "Đức", "ý": "Ý", "italy": "Ý",
+            "tây ban nha": "Tây Ban Nha", "anh": "Anh", "uk": "Anh", "thụy sĩ": "Thụy Sĩ", "hà lan": "Hà Lan",
+            "đài loan": "Đài Loan", "taiwan": "Đài Loan",
+            "úc": "Úc", "australia": "Úc", "new zealand": "New Zealand", "ấn độ": "Ấn Độ", "india": "Ấn Độ",
+            "philippines": "Philippines", "indonesia": "Indonesia", "việt nam": "Việt Nam", "vietnam": "Việt Nam"
+        }
         
-        if unsupported_country:
-            state["state"] = "idle"
-            reply = (
-                f"Dịch vụ eSIM đi **{unsupported_country}** hiện tại chưa được hỗ trợ tạo đơn tự động trực tuyến.\n\n"
-                f"Tôi xin phép chuyển tiếp yêu cầu này cho nhân viên CSKH hỗ trợ xử lý thủ công cho bạn ngay lập tức!\n\n"
-                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; background: var(--gold); font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Kết nối nhân viên hỗ trợ')\">💬 Kết nối nhân viên</button>"
-            )
-            history.append({"role": "user", "content": user_msg})
-            history.append({"role": "assistant", "content": reply})
-            return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
-
-        # Check if country is already specified in initial query
         country = None
-        for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
-            if c.lower() in user_msg.lower():
-                country = c
+        for key, val in COUNTRY_MAPPING.items():
+            if key in user_msg.lower():
+                country = val
                 break
                 
+        # If they typed a specific country that is not in mapping list (e.g. Egypt, Nam Phi), extract it
+        if not country:
+            match_country = re.search(r"(?:đi|tại|sang|mua sim|esim)\s+([A-ZÀ-Ỹa-zà-ỹ\s]+)", user_msg)
+            if match_country:
+                extracted = match_country.group(1).strip()
+                if len(extracted) > 1 and not any(w in extracted.lower() for w in ("esim", "sim", "du lịch", "giá", "bao nhiêu", "check", "tạo")):
+                    country = extracted.title()
+        
         if country:
             state["esim_country"] = country
             state["state"] = "awaiting_esim_days"
@@ -998,11 +1007,16 @@ async def smart_chat(req: ChatRequest):
             reply = (
                 f"📶 **BẠN MUỐN MUA eSIM DU LỊCH ĐI NƯỚC NÀO?**\n\n"
                 f"Vui lòng chọn quốc gia dưới đây hoặc gõ tên nước bạn muốn đến:\n\n"
-                f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Hàn Quốc')\">🇰🇷 Hàn Quốc</button>"
-                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Nhật Bản')\">🇯🇵 Nhật Bản</button>"
-                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Thái Lan')\">🇹🇭 Thái Lan</button>"
-                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Châu Âu')\">🇪🇺 Châu Âu</button>"
-                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Mỹ')\">🇺🇸 Mỹ</button>"
+                f"<div style=\"display: flex; flex-wrap: wrap; gap: 6px;\">"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Hàn Quốc')\">🇰🇷 Hàn Quốc</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Nhật Bản')\">🇯🇵 Nhật Bản</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Thái Lan')\">🇹🇭 Thái Lan</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Singapore')\">🇸🇬 Singapore</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Úc')\">🇦🇺 Úc</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Châu Âu')\">🇪🇺 Châu Âu</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Mỹ')\">🇺🇸 Mỹ</button>"
+                f"  <button class=\"header-btn-outline\" style=\"padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Đài Loan')\">🇹🇼 Đài Loan</button>"
+                f"</div>"
             )
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
@@ -1010,33 +1024,34 @@ async def smart_chat(req: ChatRequest):
 
     # Handle awaiting_esim_country
     if state.get("state") == "awaiting_esim_country":
-        # Check if they typed an unsupported country
-        unsupported_country = None
-        for uc in ("Úc", "Australia", "Đài Loan", "Canada", "Nga", "Anh", "Pháp", "Đức", "Ấn Độ", "Hồng Kông"):
-            if uc.lower() in user_msg.lower():
-                unsupported_country = uc
-                break
-                
-        if unsupported_country:
-            state["state"] = "idle"
-            reply = (
-                f"Dịch vụ eSIM đi **{unsupported_country}** hiện tại chưa được hỗ trợ tạo đơn tự động trực tuyến.\n\n"
-                f"Tôi xin phép chuyển tiếp yêu cầu này cho nhân viên CSKH hỗ trợ xử lý thủ công cho bạn ngay lập tức!\n\n"
-                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; background: var(--gold); font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Kết nối nhân viên hỗ trợ')\">💬 Kết nối nhân viên</button>"
-            )
-            history.append({"role": "user", "content": user_msg})
-            history.append({"role": "assistant", "content": reply})
-            return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
-
-        # Extract country
+        COUNTRY_MAPPING = {
+            "hàn quốc": "Hàn Quốc", "korea": "Hàn Quốc",
+            "nhật bản": "Nhật Bản", "japan": "Nhật Bản",
+            "thái lan": "Thái Lan", "thailand": "Thái Lan",
+            "singapore": "Singapore",
+            "malaysia": "Malaysia",
+            "campuchia": "Campuchia", "lào": "Lào",
+            "đông nam á": "Đông Nam Á", "sea": "Đông Nam Á",
+            "trung quốc": "Trung Quốc", "china": "Trung Quốc",
+            "hồng kông": "Hồng Kông", "hong kong": "Hồng Kông", "macau": "Macau", "ma cao": "Macau",
+            "mỹ": "Mỹ", "usa": "Mỹ", "hoa kỳ": "Mỹ",
+            "canada": "Canada",
+            "châu âu": "Châu Âu", "pháp": "Pháp", "đức": "Đức", "ý": "Ý", "italy": "Ý",
+            "tây ban nha": "Tây Ban Nha", "anh": "Anh", "uk": "Anh", "thụy sĩ": "Thụy Sĩ", "hà lan": "Hà Lan",
+            "đài loan": "Đài Loan", "taiwan": "Đài Loan",
+            "úc": "Úc", "australia": "Úc", "new zealand": "New Zealand", "ấn độ": "Ấn Độ", "india": "Ấn Độ",
+            "philippines": "Philippines", "indonesia": "Indonesia", "việt nam": "Việt Nam", "vietnam": "Việt Nam"
+        }
         country = None
-        for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
-            if c.lower() in user_msg.lower():
-                country = c
+        for key, val in COUNTRY_MAPPING.items():
+            if key in user_msg.lower():
+                country = val
                 break
+        
         if not country:
-            # Fallback extract last word
-            country = user_msg.split()[-1]
+            country = user_msg.replace("Mua eSIM đi", "").replace("eSIM đi", "").replace("sim", "").strip().title()
+            if not country or len(country) < 2:
+                country = "Toàn cầu"
         
         state["esim_country"] = country
         state["state"] = "awaiting_esim_days"
@@ -1066,9 +1081,9 @@ async def smart_chat(req: ChatRequest):
         
         # Calculate dynamic prices based on region
         c_lower = country.lower()
-        if any(w in c_lower for w in ("thái lan", "singapore", "malaysia", "đông nam á")):
+        if any(w in c_lower for w in ("thái lan", "singapore", "malaysia", "đông nam á", "philippines", "indonesia", "lào", "campuchia", "việt nam")):
             p1, p3, p_unlim = 12000 * days, 18000 * days, 28000 * days
-        elif any(w in c_lower for w in ("hàn quốc", "nhật bản", "trung quốc", "châu á")):
+        elif any(w in c_lower for w in ("hàn quốc", "nhật bản", "trung quốc", "châu á", "đài loan", "hồng kông", "macau", "ma cao")):
             p1, p3, p_unlim = 17000 * days, 25000 * days, 38000 * days
         else:
             p1, p3, p_unlim = 25000 * days, 35000 * days, 55000 * days
