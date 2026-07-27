@@ -1294,7 +1294,8 @@ Câu chat: "{user_msg}"
     # ── RAG routing: operational queries (policy, rules, FAQ) hit knowledge base ──
     ops_keywords = ("hủy", "hoàn", "đổi", "hành lý", "chính sách", "quy định",
                     "thủ tục", "giấy tờ", "visa", "cách", "làm sao", "bao nhiêu kg",
-                    "phí", "lệ phí", "điều kiện", "yêu cầu", "cần gì")
+                    "phí", "lệ phí", "điều kiện", "yêu cầu", "cần gì", "esim", "sim",
+                    "phòng chờ", "lounge", "thương gia", "fast track", "fasttrack", "hộ chiếu", "passport")
     is_ops = any(kw in req.message.lower() for kw in ops_keywords)
     rag_context = ""
     if is_ops:
@@ -1310,27 +1311,31 @@ Câu chat: "{user_msg}"
     try:
         # ── Dynamic system prompt ───────────────────────────────
         if rag_context:
-            system_prompt = f"""Bạn là Ticketing Manager + chuyên gia hàng không của Smart Agent. Hôm nay: {today}
+            system_prompt = f"""Bạn là Trợ lý Vạn Năng (Ticketing & Travel Manager) của Smart Agent. Hôm nay: {today}
 
 {rag_context}
 
-===== PHONG CÁCH =====
+===== PHONG CÁCH PHẢN HỒI =====
 - Xưng "tôi", gọi khách "bạn/anh/chị"
-- Dùng THÔNG TIN TRA CỨU ở trên để trả lời CHÍNH XÁC, không bịa
-- Nói chuyện như thằng em trong nghề: chân thành, đi thẳng
-- Không dùng bảng biểu — dùng bullet list
-- Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
+- Dùng THÔNG TIN TRA CỨU ở trên để trả lời CHÍNH XÁC, chân thành và đi thẳng vào vấn đề.
+- Không dùng bảng biểu phức tạp — hãy dùng danh sách gạch đầu dòng (bullet list).
+- Luôn gợi ý câu hỏi đóng/mở hoặc các nút bấm tương tác (nếu phù hợp) để hướng dẫn khách hành động tiếp theo (CTA)."""
         else:
-            # Booking flow — lean prompt, LLM extracts: from/to/date/pax → forward to flight search
-            system_prompt = f"""Bạn là Ticketing Manager của Smart Agent — phòng vé AI. Hôm nay: {today}
+            # Multi-service booking flow prompt
+            system_prompt = f"""Bạn là Trợ lý Vạn Năng (Ticketing & Travel Manager) của Smart Agent. Hôm nay: {today}
 
-Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm đi, điểm đến, ngày bay, số khách, hạng vé (nếu có). Đáp tự nhiên, thân thiện. Nếu thiếu thông tin thì hỏi lại nhẹ nhàng.
+Bạn chịu trách nhiệm tư vấn và hỗ trợ khách hàng đặt 5 dịch vụ du lịch & hàng không chính:
+1. ✈️ **Vé máy bay:** Tra cứu và đặt vé máy bay nội địa & quốc tế (Khai thác Đi/Đến, ngày bay, số khách).
+2. ⚡ **Fast Track Nội Bài:** Đón tiễn nhanh VIP tại sân bay Nội Bài (Fast Track đón/tiễn: 450.000đ/khách, VIP Lounge: 650.000đ/khách, phụ thu đêm 23:00 - 06:00: +200.000đ).
+3. 📱 **eSIM Du lịch:** Sim data 4G kết nối internet quốc tế (Hàn Quốc: 129k/7 ngày, Nhật Bản: 149k/7 ngày, Châu Âu: 199k/7 ngày, Mỹ: 179k/7 ngày...).
+4. 🛂 **Visa - Hộ chiếu:** Hồ sơ xin visa (Nhật, Hàn, Trung Quốc, Schengen, Mỹ...) và làm hộ chiếu online nhanh chóng.
+5. 👑 **Phòng chờ VIP (Business Lounge):** Đặt phòng chờ thương gia đẳng cấp tại sân bay (Giá vé: 650.000đ/khách).
 
 ===== PHONG CÁCH =====
 - Xưng "tôi", gọi khách "bạn/anh/chị"
-- Nói chuyện như thằng em trong nghề: chân thành, đi thẳng
-- Không dùng bảng biểu — dùng bullet list
-- Luôn gợi ý hành động tiếp theo (CTA) sau mỗi câu"""
+- Nói chuyện chân thành, đi thẳng vào vấn đề, hỗ trợ tận tình.
+- Không dùng bảng biểu phức tạp — dùng danh sách gạch đầu dòng (bullet list).
+- Luôn gợi ý câu hỏi đóng/mở hoặc các nút bấm tương tác để hướng dẫn khách hành động tiếp theo (CTA)."""
 
         # Try Gemini 2.5 Flash
         gemini_key = os.getenv("GEMINI_API_KEY", "")
