@@ -907,6 +907,7 @@ async def smart_chat(req: ChatRequest):
         state["pax_dob"] = None
         state["pax_email"] = None
         state["pax_phone"] = None
+        state["ancillaries"] = "Không đăng ký"
         
         reply = (
             f"Cảm ơn bạn đã chọn chuyến bay **{state['flight']}** ({state['route']}).\n\n"
@@ -922,14 +923,14 @@ async def smart_chat(req: ChatRequest):
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
     # 2. Handle Cancel booking request
-    if state["state"] in ("awaiting_pax_info", "awaiting_confirm") and any(w in user_msg.lower() for w in ("hủy", "cancel", "từ chối", "không đồng ý")):
+    if state["state"] in ("awaiting_pax_info", "awaiting_ancillaries", "awaiting_confirm") and any(w in user_msg.lower() for w in ("hủy", "cancel", "từ chối", "không đồng ý")):
         state["state"] = "idle"
         reply = "Đã hủy tiến trình giữ chỗ vé máy bay. Tôi có thể giúp gì khác cho bạn?"
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
-    # 3. Handle Payment inquiry
+    # 3. Handle Payment inquiry with dynamic deadline & cross-sell options
     pay_match = re.match(r"^Thanh toán\s+(\w+)", user_msg, re.IGNORECASE)
     if pay_match or (state["state"] == "hold_success" and "thanh toán" in user_msg.lower()):
         pnr = pay_match.group(1).upper() if pay_match else state.get("pnr", "PNR123")
@@ -937,15 +938,29 @@ async def smart_chat(req: ChatRequest):
         price_disp = f"{price:,}đ" if price else "Liên hệ"
         qr_url = f"https://img.vietqr.io/image/acb-9999998888-compact.png?amount={price}&addInfo=Thanh%20toan%20booking%20{pnr}&accountName=CONG%20TY%20ABTRIP"
         
+        deadline = (datetime.now() + timedelta(hours=4)).strftime("%H:%M ngày %d/%m/%Y")
+        
         reply = (
             f"💳 **THÔNG TIN THANH TOÁN CHUYỂN KHOẢN**\n\n"
             f"• **Ngân hàng:** Á Châu (ACB)\n"
             f"• **Số tài khoản:** **9999998888**\n"
             f"• **Chủ tài khoản:** CONG TY ABTRIP\n"
             f"• **Số tiền:** **{price_disp}**\n"
+            f"• **Hạn thanh toán:** **{deadline}**\n"
             f"• **Nội dung chuyển khoản:** **{pnr}**\n\n"
             f"👉 Quét mã QR dưới đây để thanh toán nhanh qua ứng dụng Ngân hàng của bạn:\n\n"
-            f"<img src=\"{qr_url}\" style=\"max-width: 250px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 10px; border: 1px solid var(--border);\" />"
+            f"<img src=\"{qr_url}\" style=\"max-width: 250px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 10px; border: 1px solid var(--border);\" />\n\n"
+            f"---\n\n"
+            f"🎁 **ƯU ĐÃI ĐI KÈM HÀNH TRÌNH CỦA BẠN:**\n"
+            f"Để chuẩn bị tốt nhất cho chuyến đi của bạn, bạn có muốn đăng ký thêm dịch vụ ưu đãi giảm giá 10% này không?\n"
+            f"• ⚡ **Fast Track Nội Bài** (Đi lối nhanh VIP)\n"
+            f"• 📱 **eSIM du lịch** kết nối mạng 4G tốc độ cao\n"
+            f"• 🏨 **Đặt phòng Khách sạn** giá tốt tại điểm đến\n"
+            f"• 🛂 **Tư vấn Visa / Hộ chiếu** nhanh chóng\n\n"
+            f"👉 Click để đăng ký nhanh:\n\n"
+            f"<button class=\"header-btn-outline\" style=\"padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; cursor: pointer;\" onclick=\"sendSuggestion('Tôi muốn đặt dịch vụ Fast Track')\">⚡ Đặt Fast Track</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; cursor: pointer;\" onclick=\"sendSuggestion('Tôi muốn mua eSIM du lịch')\">📱 eSIM du lịch</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; cursor: pointer;\" onclick=\"sendSuggestion('Tư vấn Visa và Khách sạn')\">🏨 Visa & Khách sạn</button>"
         )
         state["state"] = "idle"
         history.append({"role": "user", "content": user_msg})
@@ -1002,28 +1017,90 @@ Câu chat của khách: "{user_msg}"
                 f"Vui lòng bổ sung hoặc gõ lại tự nhiên các thông tin còn thiếu này giúp tôi nhé!"
             )
         else:
-            state["state"] = "awaiting_confirm"
+            # Go to ancillaries upselling step instead of immediate confirmation
+            state["state"] = "awaiting_ancillaries"
             reply = (
-                f"📝 **XÁC NHẬN THÔNG TIN ĐẶT VÉ**\n\n"
-                f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
-                f"• **Hành khách:** {state['pax_name']}\n"
-                f"• **Ngày sinh:** {state['pax_dob']}\n"
-                f"• **Email:** {state['pax_email']}\n"
-                f"• **Số điện thoại:** {state['pax_phone']}\n\n"
-                f"👉 Bạn xác nhận thông tin trên là chính xác chứ?\n\n"
-                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Xác nhận đặt vé')\">✅ Xác nhận đặt vé</button>"
-                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
+                f"📦 **ĐĂNG KÝ DỊCH VỤ ĐI KÈM (BÁN THÊM)**\n\n"
+                f"Bạn có muốn mua thêm các dịch vụ đi kèm dưới đây để chuyến đi thoải mái hơn không?\n"
+                f"• 🧳 **Hành lý ký gửi:** 15kg (+180k), 20kg (+220k), 25kg (+290k)\n"
+                f"• 💺 **Chọn chỗ ngồi:** Chỗ để chân rộng (+80k), ghế phía trước (+50k)\n"
+                f"• 🍲 **Suất ăn nóng sốt trên mây:** Suất ăn nóng + nước uống (+75k/suất)\n\n"
+                f"👉 Gõ nhu cầu của bạn (ví dụ: *'Thêm 20kg hành lý'*) hoặc click nút bên dưới để tiếp tục:\n\n"
+                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Bỏ qua dịch vụ đi kèm')\">⏩ Bỏ qua & Tiếp tục</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Thêm 20kg hành lý ký gửi')\">🧳 Thêm 20kg hành lý (+220k)</button>"
             )
             
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
-    # 5. If state is "awaiting_confirm" and they say confirm
+    # 5. Handle "awaiting_ancillaries"
+    if state["state"] == "awaiting_ancillaries":
+        from app.services.llm_gateway import get_llm
+        llm = get_llm()
+        
+        prompt = f"""Bạn là trợ lý phòng vé. Hãy phân tích câu chat của khách xem họ muốn mua thêm dịch vụ đi kèm nào:
+- Mua thêm hành lý (baggage): ghi nhận loại hành lý và số tiền phụ thu (ví dụ: "Thêm 20kg hành lý ký gửi" -> phụ thu 220000).
+- Chọn chỗ ngồi (seat): ghi nhận loại chỗ ngồi và số tiền (ví dụ: "chỗ để chân rộng" -> phụ thu 80000).
+- Suất ăn (meal): ghi nhận suất ăn và số tiền (ví dụ: "suất ăn nóng" -> phụ thu 75000).
+
+Trả về đúng 1 đối tượng JSON chứa các trường:
+- has_ancillaries: boolean (True nếu khách mua, False nếu chọn bỏ qua/không cần)
+- description: string (Mô tả dịch vụ khách chọn, ví dụ: "Hành lý ký gửi 20kg")
+- fee: int (Số tiền phụ thu thêm bằng số, ví dụ: 220000, mặc định 0)
+
+Câu chat: "{user_msg}"
+"""
+        description = "Không đăng ký"
+        fee = 0
+        if "bỏ qua" not in user_msg.lower() and "không cần" not in user_msg.lower():
+            try:
+                resp_obj = await llm.chat(prompt)
+                import json
+                raw_content = resp_obj.content.strip()
+                if raw_content.startswith("```"):
+                    lines = raw_content.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    raw_content = "\n".join(lines).strip()
+                    
+                extracted = json.loads(raw_content)
+                if extracted.get("has_ancillaries"):
+                    description = extracted.get("description", "Dịch vụ thêm")
+                    fee = extracted.get("fee", 0)
+            except Exception as e:
+                logger.error("Error parsing ancillaries with LLM: %s", e)
+
+        state["ancillaries"] = description
+        state["price"] += fee
+        state["state"] = "awaiting_confirm"
+        
+        price_disp = f"{state['price']:,}đ"
+        reply = (
+            f"📝 **XÁC NHẬN THÔNG TIN ĐẶT VÉ**\n\n"
+            f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+            f"• **Hành khách:** {state['pax_name']}\n"
+            f"• **Ngày sinh:** {state['pax_dob']}\n"
+            f"• **Email:** {state['pax_email']}\n"
+            f"• **Số điện thoại:** {state['pax_phone']}\n"
+            f"• **Dịch vụ đi kèm:** {state['ancillaries']}\n"
+            f"• **Tổng giá vé:** **{price_disp}**\n\n"
+            f"👉 Bạn xác nhận thông tin trên là chính xác chứ?\n\n"
+            f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Xác nhận đặt vé')\">✅ Xác nhận đặt vé</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # 6. If state is "awaiting_confirm" and they say confirm
     if state["state"] == "awaiting_confirm" and any(w in user_msg.lower() for w in ("xác nhận", "đồng ý", "ok", "yes", "confirm", "chốt")):
         import random
         pnr = "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=6))
         price_disp = f"{state['price']:,}đ" if state.get("price") else "Liên hệ"
+        deadline = (datetime.now() + timedelta(hours=4)).strftime("%H:%M ngày %d/%m/%Y")
         reply = (
             f"🎉 **GIỮ CHỖ THÀNH CÔNG!**\n\n"
             f"• **Mã đặt chỗ (PNR):** **{pnr}**\n"
@@ -1032,7 +1109,9 @@ Câu chat của khách: "{user_msg}"
             f"• **Ngày sinh:** {state['pax_dob']}\n"
             f"• **Email:** {state['pax_email']}\n"
             f"• **Số điện thoại:** {state['pax_phone']}\n"
-            f"• **Giá vé:** {price_disp}\n\n"
+            f"• **Dịch vụ đi kèm:** {state['ancillaries']}\n"
+            f"• **Hạn giữ chỗ:** **{deadline}**\n"
+            f"• **Tổng thanh toán:** **{price_disp}**\n\n"
             f"Tôi đã gửi thông tin hướng dẫn thanh toán chi tiết qua Email **{state['pax_email']}** "
             f"và SMS tới số **{state['pax_phone']}**.\n\n"
             f"👉 Vui lòng thanh toán trước thời hạn để tránh bị hủy chỗ tự động:\n\n"
