@@ -689,7 +689,7 @@
 
     function renderFlightCard(data) {
         if (!data || !data.flights) return null;
-        const flights = data.flights.slice(0, 5);
+        const flights = data.flights.slice(0, 15);
         if (flights.length === 0) return null;
 
         const rawDate = data.date || '';
@@ -749,6 +749,9 @@
 
         // Container for flight rows
         const rowsContainer = document.createElement('div');
+        rowsContainer.style.maxHeight = '450px';
+        rowsContainer.style.overflowY = 'auto';
+        rowsContainer.style.paddingRight = '6px';
         
         flights.forEach(f => {
             const row = document.createElement('div');
