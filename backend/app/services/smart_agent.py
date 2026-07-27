@@ -949,7 +949,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
                         }]
                     )
                     flight_text = _format_flight_results(result, fp)
-                    text = flight_text + ("\n" + text if text else "\n\n💬 Cần hỗ trợ gì thêm?")
+                    text = flight_text + "\n\n👉 Bạn chọn chuyến bay nào ở trên để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
                 except Exception as e:
                     logger.warning("AGT search failed: %s", e)
                     text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi kết nối AGT: {e})" + ("\n\n" + text if text else "")
@@ -1017,7 +1017,7 @@ Nhiệm vụ: Hiểu yêu cầu đặt vé của khách, trích xuất: điểm 
                         }]
                     )
                     flight_text = _format_flight_results(result, fp)
-                    text = flight_text + "\n\n💬 Cần hỗ trợ gì thêm?"
+                    text = flight_text + "\n\n👉 Bạn chọn chuyến bay nào ở trên để tôi tiến hành giữ chỗ và lấy thông tin xuất vé nhé?"
                 except Exception as e:
                     logger.warning("AGT search failed: %s", e)
                     text = f"⚠️ Đang tìm vé {fp['from']}→{fp['to']} ngày {fp['date']}...\n(Lỗi: {e})\n\nVui lòng thử lại sau."
