@@ -680,31 +680,118 @@
             .replace(/\n/g, '<br>')
     }
 
+    const airlineNames = {
+        "VN": "Vietnam Airlines",
+        "VJ": "Vietjet Air",
+        "QH": "Bamboo Airways",
+        "VU": "Vietravel Airlines"
+    };
+
     function renderFlightCard(data) {
-        if (!data || !data.flights) return null
-        const flights = data.flights.slice(0, 5)
-        if (flights.length === 0) return null
-        const card = document.createElement('div')
-        card.className = 'result-card'
-        card.innerHTML = `<div style="font-weight:700;font-size:13px;margin-bottom:8px;">✈️ Chuyến bay tìm thấy</div>`
+        if (!data || !data.flights) return null;
+        const flights = data.flights.slice(0, 5);
+        if (flights.length === 0) return null;
+
+        const rawDate = data.date || '';
+        const dateDisp = rawDate.length === 8 ? `${rawDate.slice(0,2)}/${rawDate.slice(2,4)}/${rawDate.slice(4)}` : rawDate;
+
+        const card = document.createElement('div');
+        card.className = 'result-card';
+        card.style.position = 'relative';
+
+        // Header with title, copy button, and collapse toggle
+        const header = document.createElement('div');
+        header.style.display = 'flex';
+        header.style.justify = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.marginBottom = '10px';
+        header.style.borderBottom = '1px solid var(--border)';
+        header.style.paddingBottom = '6px';
+
+        const title = document.createElement('span');
+        title.style.fontWeight = '700';
+        title.style.fontSize = '13px';
+        title.innerHTML = `✈️ Vé ${data.from} → ${data.to} (${dateDisp})`;
+
+        const actions = document.createElement('div');
+        actions.style.display = 'flex';
+        actions.style.gap = '8px';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'header-btn-outline';
+        copyBtn.style.padding = '2px 6px';
+        copyBtn.style.fontSize = '11px';
+        copyBtn.innerHTML = '📋 Copy';
+        copyBtn.onclick = () => {
+            let text = `✈️ CHUYẾN BAY TÌM THẤY (${data.from} → ${data.to}) - Ngày bay: ${dateDisp}\n\n`;
+            data.flights.slice(0, 10).forEach((f, i) => {
+                const aName = airlineNames[f.airline] || f.airline;
+                text += `${i+1}. ${aName} (${f.flight_number}) | Khởi hành: ${f.time} | Vé: ${f.cabin} | Giá: ${f.price.toLocaleString()}đ | Còn ${f.avail} chỗ\n`;
+            });
+            navigator.clipboard.writeText(text).then(() => {
+                const original = copyBtn.innerHTML;
+                copyBtn.innerHTML = '✅ Copied!';
+                setTimeout(() => copyBtn.innerHTML = original, 2000);
+            });
+        };
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'header-btn-outline';
+        toggleBtn.style.padding = '2px 6px';
+        toggleBtn.style.fontSize = '11px';
+        toggleBtn.innerHTML = '➖ Thu gọn';
+
+        actions.appendChild(copyBtn);
+        actions.appendChild(toggleBtn);
+        header.appendChild(title);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Container for flight rows
+        const rowsContainer = document.createElement('div');
+        
         flights.forEach(f => {
-            const row = document.createElement('div')
-            row.className = 'flight-row'
+            const row = document.createElement('div');
+            row.className = 'flight-row';
+            const aName = airlineNames[f.airline] || f.airline;
             row.innerHTML = `
                 <div>
-                    <div class="flight-route">${f.flight_number || f.airline || 'VJ'} — ${f.route || `${data.from}→${data.to}`}</div>
-                    <div class="flight-time">${f.time || 'Xem chi tiết'}</div>
-                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${f.cabin || ''} | còn ${f.avail || 0} chỗ</div>
+                    <div class="flight-route" style="font-weight:600;font-size:13px;color:var(--text);">${aName} (${f.flight_number}) — ${f.route || `${data.from}→${data.to}`}</div>
+                    <div class="flight-time" style="font-size:12px;margin:2px 0;">🕛 ${f.time || 'Xem chi tiết'} (${dateDisp})</div>
+                    <div style="font-size:11px;color:var(--text-muted);">${f.cabin || ''} | còn ${f.avail || 0} chỗ</div>
                 </div>
                 <div style="text-align:right;">
-                    <div class="flight-price">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
+                    <div class="flight-price" style="font-weight:700;color:var(--gold);margin-bottom:4px;">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
                     <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''}')">Chọn</button>
                 </div>
-            `
-            card.appendChild(row)
-        })
-        card.innerHTML += `<div style="margin-top:8px;font-size:11px;color:var(--text-muted);text-align:center;">Bạn muốn đặt chuyến nào? Nói 1 câu để tiếp tục</div>`
-        return card
+            `;
+            rowsContainer.appendChild(row);
+        });
+
+        card.appendChild(rowsContainer);
+
+        const footer = document.createElement('div');
+        footer.style.marginTop = '8px';
+        footer.style.fontSize = '11px';
+        footer.style.color = 'var(--text-muted)';
+        footer.style.textAlign = 'center';
+        footer.innerHTML = 'Chọn chuyến bay mong muốn để đặt vé';
+        card.appendChild(footer);
+
+        // Toggle visibility click handler
+        toggleBtn.onclick = () => {
+            if (rowsContainer.style.display === 'none') {
+                rowsContainer.style.display = 'block';
+                footer.style.display = 'block';
+                toggleBtn.innerHTML = '➖ Thu gọn';
+            } else {
+                rowsContainer.style.display = 'none';
+                footer.style.display = 'none';
+                toggleBtn.innerHTML = '➕ Mở rộng';
+            }
+        };
+
+        return card;
     }
 
     function renderServiceCard(data) {
