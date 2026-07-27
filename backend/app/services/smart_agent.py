@@ -934,21 +934,43 @@ async def smart_chat(req: ChatRequest):
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
     # 1.5. eSIM Booking State Machine
-    # Trigger eSIM flow
-    if any(w in user_msg.lower() for w in ("esim du lịch", "mua esim", "đặt esim")) and not state.get("state", "").startswith("awaiting_esim"):
-        state["state"] = "awaiting_esim_country"
-        state["esim_country"] = None
+    # Trigger eSIM flow (matches esim, sim, check sim, tao sim, etc.)
+    import re
+    is_sim_intent = any(w in user_msg.lower() for w in ("esim", "sim du lịch", "mua sim", "đặt sim", "check sim", "tạo sim", "cần sim", "gói sim")) or re.search(r"\bsim\b", user_msg.lower())
+    if is_sim_intent and not state.get("state", "").startswith("awaiting_esim"):
         state["esim_days"] = None
         state["esim_package"] = None
-        reply = (
-            f"📶 **BẠN MUỐN MUA eSIM DU LỊCH ĐI NƯỚC NÀO?**\n\n"
-            f"Vui lòng chọn quốc gia dưới đây hoặc gõ tên nước bạn muốn đến:\n\n"
-            f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Hàn Quốc')\">🇰🇷 Hàn Quốc</button>"
-            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Nhật Bản')\">🇯🇵 Nhật Bản</button>"
-            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Thái Lan')\">🇹🇭 Thái Lan</button>"
-            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Châu Âu')\">🇪🇺 Châu Âu</button>"
-            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Mỹ')\">🇺🇸 Mỹ</button>"
-        )
+        
+        # Check if country is already specified in initial query
+        country = None
+        for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
+            if c.lower() in user_msg.lower():
+                country = c
+                break
+                
+        if country:
+            state["esim_country"] = country
+            state["state"] = "awaiting_esim_days"
+            reply = (
+                f"📅 **BẠN ĐI {country.upper()} TRONG MẤY NGÀY?**\n\n"
+                f"Vui lòng click chọn số ngày cho chuyến đi của bạn:\n\n"
+                f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 5 ngày')\">📅 5 ngày</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 7 ngày')\">📅 7 ngày</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 10 ngày')\">📅 10 ngày</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 15 ngày')\">📅 15 ngày</button>"
+            )
+        else:
+            state["state"] = "awaiting_esim_country"
+            state["esim_country"] = None
+            reply = (
+                f"📶 **BẠN MUỐN MUA eSIM DU LỊCH ĐI NƯỚC NÀO?**\n\n"
+                f"Vui lòng chọn quốc gia dưới đây hoặc gõ tên nước bạn muốn đến:\n\n"
+                f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Hàn Quốc')\">🇰🇷 Hàn Quốc</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Nhật Bản')\">🇯🇵 Nhật Bản</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Thái Lan')\">🇹🇭 Thái Lan</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Châu Âu')\">🇪🇺 Châu Âu</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Mỹ')\">🇺🇸 Mỹ</button>"
+            )
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
