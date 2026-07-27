@@ -933,6 +933,21 @@ async def smart_chat(req: ChatRequest):
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
+    # 1.4. Handle Escalation to Staff (escalates out-of-scope requests to human support)
+    if any(w in user_msg.lower() for w in ("nhân viên", "kết nối", "gặp người", "cskh", "hotline", "gọi điện", "liên hệ", "gặp tư vấn")):
+        state["state"] = "idle"
+        reply = (
+            "📞 **KẾT NỐI NHÂN VIÊN HỖ TRỢ CSKH**\n\n"
+            "Dạ, tôi đã gửi yêu cầu hỗ trợ của bạn đến nhân viên trực tổng đài.\n"
+            "Nhân viên phòng vé sẽ liên hệ hỗ trợ bạn trực tiếp qua Zalo hoặc điện thoại trong vòng **5 phút** tới.\n\n"
+            "• **Hotline hỗ trợ nhanh:** **1900 1234**\n"
+            "• **Zalo CSKH:** **0988 888 888**\n\n"
+            "Cảm ơn bạn đã tin tưởng dịch vụ!"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
     # 1.5. eSIM Booking State Machine
     # Trigger eSIM flow (matches esim, sim, check sim, tao sim, etc.)
     import re
@@ -941,6 +956,24 @@ async def smart_chat(req: ChatRequest):
         state["esim_days"] = None
         state["esim_package"] = None
         
+        # Check if they specified an unsupported country
+        unsupported_country = None
+        for uc in ("Úc", "Australia", "Đài Loan", "Canada", "Nga", "Anh", "Pháp", "Đức", "Ấn Độ", "Hồng Kông"):
+            if uc.lower() in user_msg.lower():
+                unsupported_country = uc
+                break
+        
+        if unsupported_country:
+            state["state"] = "idle"
+            reply = (
+                f"Dịch vụ eSIM đi **{unsupported_country}** hiện tại chưa được hỗ trợ tạo đơn tự động trực tuyến.\n\n"
+                f"Tôi xin phép chuyển tiếp yêu cầu này cho nhân viên CSKH hỗ trợ xử lý thủ công cho bạn ngay lập tức!\n\n"
+                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; background: var(--gold); font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Kết nối nhân viên hỗ trợ')\">💬 Kết nối nhân viên</button>"
+            )
+            history.append({"role": "user", "content": user_msg})
+            history.append({"role": "assistant", "content": reply})
+            return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
         # Check if country is already specified in initial query
         country = None
         for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
@@ -977,6 +1010,24 @@ async def smart_chat(req: ChatRequest):
 
     # Handle awaiting_esim_country
     if state.get("state") == "awaiting_esim_country":
+        # Check if they typed an unsupported country
+        unsupported_country = None
+        for uc in ("Úc", "Australia", "Đài Loan", "Canada", "Nga", "Anh", "Pháp", "Đức", "Ấn Độ", "Hồng Kông"):
+            if uc.lower() in user_msg.lower():
+                unsupported_country = uc
+                break
+                
+        if unsupported_country:
+            state["state"] = "idle"
+            reply = (
+                f"Dịch vụ eSIM đi **{unsupported_country}** hiện tại chưa được hỗ trợ tạo đơn tự động trực tuyến.\n\n"
+                f"Tôi xin phép chuyển tiếp yêu cầu này cho nhân viên CSKH hỗ trợ xử lý thủ công cho bạn ngay lập tức!\n\n"
+                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; background: var(--gold); font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Kết nối nhân viên hỗ trợ')\">💬 Kết nối nhân viên</button>"
+            )
+            history.append({"role": "user", "content": user_msg})
+            history.append({"role": "assistant", "content": reply})
+            return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
         # Extract country
         country = None
         for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
