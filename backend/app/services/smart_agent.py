@@ -978,6 +978,110 @@ async def smart_chat(req: ChatRequest):
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
+    # 3.6. Handle "Xem sơ đồ ghế" or "Chọn ghế"
+    if "sơ đồ ghế" in user_msg.lower() or "sơ đồ chỗ" in user_msg.lower():
+        reply = (
+            f"🗺️ **SƠ ĐỒ CHỖ NGỒI MÁY BAY ({state.get('flight', 'Flight')})**\n\n"
+            f"Vui lòng click chọn ghế mong muốn bên dưới để thêm vào đặt chỗ:\n\n"
+            f"<div style=\"display: flex; justify-content: center; gap: 12px; font-size: 10px; color: var(--text-muted); margin-bottom: 12px;\">"
+            f"  <div style=\"display: flex; align-items: center; gap: 4px;\"><span style=\"display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: rgba(0,0,0,0.05); border: 1px solid var(--border);\"></span> Trống</div>"
+            f"  <div style=\"display: flex; align-items: center; gap: 4px;\"><span style=\"display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: #e6a23c; border: 1px solid #e6a23c;\"></span> Chân rộng (+80k)</div>"
+            f"  <div style=\"display: flex; align-items: center; gap: 4px;\"><span style=\"display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: #e0e0e0; color: #999; text-align: center; line-height: 12px; font-size: 8px;\">X</span> Đã chọn</div>"
+            f"</div>"
+            f"<div style=\"max-width: 220px; margin: 0 auto; background: #fff; border-radius: 20px 20px 8px 8px; border: 2px solid var(--border); padding: 20px 10px 10px 10px; position: relative; box-shadow: 0 4px 10px rgba(0,0,0,0.03);\">"
+            f"  <div style=\"font-size: 9px; color: var(--text-muted); font-weight: 700; margin-bottom: 10px; text-transform: uppercase; text-align: center;\">✈️ Đầu máy bay (Front)</div>"
+            f"  <div style=\"display: flex; flex-direction: column; gap: 6px;\">"
+            f"    <div style=\"display: flex; align-items: center; justify-content: space-between;\">"
+            f"      <span style=\"font-size: 9px; width: 12px; color: var(--text-muted); font-weight: bold;\">1</span>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; font-weight: bold; background: #fdf6ec; border: 1px solid #f5dab1; color: #e6a23c; border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 1A chân rộng')\">1A</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; font-weight: bold; background: #fdf6ec; border: 1px solid #f5dab1; color: #e6a23c; border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 1B chân rộng')\">1B</button>"
+            f"        <button style=\"width: 24px; height: 24px; font-size: 9px; background: #e0e0e0; border: 1px solid #ccc; color: #999; border-radius: 4px; padding: 0;\" disabled>X</button>"
+            f"      </div>"
+            f"      <div style=\"width: 14px;\"></div>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; font-weight: bold; background: #fdf6ec; border: 1px solid #f5dab1; color: #e6a23c; border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 1D chân rộng')\">1D</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; font-weight: bold; background: #fdf6ec; border: 1px solid #f5dab1; color: #e6a23c; border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 1E chân rộng')\">1E</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; font-weight: bold; background: #fdf6ec; border: 1px solid #f5dab1; color: #e6a23c; border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 1F chân rộng')\">1F</button>"
+            f"      </div>"
+            f"    </div>"
+            f"    <div style=\"display: flex; align-items: center; justify-content: space-between;\">"
+            f"      <span style=\"font-size: 9px; width: 12px; color: var(--text-muted); font-weight: bold;\">2</span>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 2A')\">2A</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 2B')\">2B</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 2C')\">2C</button>"
+            f"      </div>"
+            f"      <div style=\"width: 14px;\"></div>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button style=\"width: 24px; height: 24px; font-size: 9px; background: #e0e0e0; border: 1px solid #ccc; color: #999; border-radius: 4px; padding: 0;\" disabled>X</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 2E')\">2E</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 2F')\">2F</button>"
+            f"      </div>"
+            f"    </div>"
+            f"    <div style=\"display: flex; align-items: center; justify-content: space-between;\">"
+            f"      <span style=\"font-size: 9px; width: 12px; color: var(--text-muted); font-weight: bold;\">3</span>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 3A')\">3A</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 3B')\">3B</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 3C')\">3C</button>"
+            f"      </div>"
+            f"      <div style=\"width: 14px;\"></div>"
+            f"      <div style=\"display: flex; gap: 4px;\">"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 3D')\">3D</button>"
+            f"        <button style=\"width: 24px; height: 24px; font-size: 9px; background: #e0e0e0; border: 1px solid #ccc; color: #999; border-radius: 4px; padding: 0;\" disabled>X</button>"
+            f"        <button class=\"book-btn\" style=\"width: 24px; height: 24px; font-size: 9px; background: #f5f5f5; border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0; cursor: pointer;\" onclick=\"sendSuggestion('Chọn ghế 3F')\">3F</button>"
+            f"      </div>"
+            f"    </div>"
+            f"  </div>"
+            f"  <div style=\"font-size: 8px; color: var(--text-muted); margin-top: 10px; text-align: center;\">... Hàng ghế sau tương tự ...</div>"
+            f"</div>"
+            f"<div style=\"display: flex; gap: 8px; margin-top: 12px;\">"
+            f"  <button class=\"header-btn-outline\" style=\"width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: transparent; font-weight: bold; cursor: pointer; color: var(--text);\" onclick=\"sendSuggestion('Bỏ qua dịch vụ đi kèm')\">⏩ Bỏ qua chọn ghế & Tiếp tục</button>"
+            f"</div>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    seat_match = re.match(r"^Chọn ghế\s+(\w+)(?:\s+(.*))?", user_msg, re.IGNORECASE)
+    if seat_match:
+        seat_num = seat_match.group(1).upper()
+        details = seat_match.group(2) or ""
+        fee = 80000 if "chân rộng" in details.lower() else 0
+        state["ancillaries"] = f"Chọn ghế {seat_num}"
+        state["price"] += fee
+        state["state"] = "awaiting_confirm"
+        
+        price_disp = f"{state['price']:,}đ"
+        
+        raw_date = state.get("date") or ""
+        date_disp = f"{raw_date[0:2]}/{raw_date[2:4]}/{raw_date[4:]}" if len(raw_date) == 8 else raw_date
+        raw_time = state.get("time") or ""
+        time_disp = raw_time.replace("→", " → ")
+        airline_code = state.get("flight", "")[0:2]
+        airline_name = {"VN": "Vietnam Airlines", "VJ": "Vietjet Air", "QH": "Bamboo Airways", "VU": "Vietravel Airlines"}.get(airline_code, airline_code)
+        
+        reply = (
+            f"📝 **XÁC NHẬN THÔNG TIN ĐẶT VÉ**\n\n"
+            f"• **Hãng bay:** {airline_name}\n"
+            f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+            f"• **Ngày bay:** {date_disp}\n"
+            f"• **Giờ bay:** {time_disp}\n"
+            f"• **Hành khách:** {state['pax_name']}\n"
+            f"• **Ngày sinh:** {state['pax_dob']}\n"
+            f"• **Email:** {state['pax_email']}\n"
+            f"• **Số điện thoại:** {state['pax_phone']}\n"
+            f"• **Dịch vụ đi kèm:** {state['ancillaries']}\n"
+            f"• **Tổng giá vé:** **{price_disp}**\n\n"
+            f"👉 Bạn xác nhận thông tin trên là chính xác chứ?\n\n"
+            f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Xác nhận đặt vé')\">✅ Xác nhận đặt vé</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
     # 4. If state is "awaiting_pax_info"
     if state["state"] == "awaiting_pax_info":
         from app.services.llm_gateway import get_llm
@@ -1052,7 +1156,7 @@ Câu chat của khách: "{user_msg}"
                 f"        <div style=\"font-size: 11px; color: var(--text-muted);\">Ghế ngồi thoải mái rộng chân</div>"
                 f"      </div>"
                 f"    </div>"
-                f"    <button class=\"book-btn\" style=\"padding: 4px 10px; font-size: 11px; border-radius: 4px; cursor: pointer;\" onclick=\"sendSuggestion('Thêm chỗ ngồi rộng chân')\">+80k</button>"
+                f"    <button class=\"book-btn\" style=\"padding: 4px 10px; font-size: 11px; border-radius: 4px; cursor: pointer; background: var(--gold);\" onclick=\"sendSuggestion('Xem sơ đồ ghế')\">🗺️ Sơ đồ ghế</button>"
                 f"  </div>"
                 f"  <div style=\"display: flex; align-items: center; justify-content: space-between; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.02);\">"
                 f"    <div style=\"display: flex; align-items: center; gap: 10px;\">"
