@@ -1057,6 +1057,7 @@ Câu chat của khách: "{user_msg}"
                 f"<div style=\"margin-top: 12px;\">"
                 f"  <button class=\"header-btn-outline\" style=\"width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: transparent; font-weight: bold; cursor: pointer; color: var(--text);\" onclick=\"sendSuggestion('Bỏ qua dịch vụ đi kèm')\">⏩ Bỏ qua & Tiếp tục</button>"
                 f"</div>"
+            )
             
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
