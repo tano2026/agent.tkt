@@ -862,7 +862,7 @@ def _get_structured_flights(data: dict, params: dict) -> dict:
                 "cabin": f"{family} ({cabin})",
                 "avail": avail
             })
-    return {"flights": flights, "from": params.get("from"), "to": params.get("to")}
+    return {"flights": flights, "from": params.get("from"), "to": params.get("to"), "date": params.get("date")}
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -894,12 +894,13 @@ async def smart_chat(req: ChatRequest):
 
     user_msg = req.message.strip()
 
-    # 1. Detect "Đặt vé <FlightNumber> <Route>" (e.g. from frontend select button)
+    # 1. Detect "Đặt vé <FlightNumber> <Route> <Price>" (e.g. from frontend select button)
     import re
-    select_match = re.match(r"^Đặt vé\s+(\S+)\s+(\S+)", user_msg, re.IGNORECASE)
+    select_match = re.match(r"^Đặt vé\s+(\S+)\s+(\S+)(?:\s+(\d+))?", user_msg, re.IGNORECASE)
     if select_match:
         state["flight"] = select_match.group(1).upper()
         state["route"] = select_match.group(2).upper()
+        state["price"] = int(select_match.group(3)) if select_match.group(3) else 0
         state["state"] = "awaiting_pax_info"
         
         state["pax_name"] = None
@@ -920,7 +921,38 @@ async def smart_chat(req: ChatRequest):
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
-    # 2. If state is "awaiting_pax_info"
+    # 2. Handle Cancel booking request
+    if state["state"] in ("awaiting_pax_info", "awaiting_confirm") and any(w in user_msg.lower() for w in ("hủy", "cancel", "từ chối", "không đồng ý")):
+        state["state"] = "idle"
+        reply = "Đã hủy tiến trình giữ chỗ vé máy bay. Tôi có thể giúp gì khác cho bạn?"
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # 3. Handle Payment inquiry
+    pay_match = re.match(r"^Thanh toán\s+(\w+)", user_msg, re.IGNORECASE)
+    if pay_match or (state["state"] == "hold_success" and "thanh toán" in user_msg.lower()):
+        pnr = pay_match.group(1).upper() if pay_match else state.get("pnr", "PNR123")
+        price = state.get("price", 0)
+        price_disp = f"{price:,}đ" if price else "Liên hệ"
+        qr_url = f"https://img.vietqr.io/image/acb-9999998888-compact.png?amount={price}&addInfo=Thanh%20toan%20booking%20{pnr}&accountName=CONG%20TY%20ABTRIP"
+        
+        reply = (
+            f"💳 **THÔNG TIN THANH TOÁN CHUYỂN KHOẢN**\n\n"
+            f"• **Ngân hàng:** Á Châu (ACB)\n"
+            f"• **Số tài khoản:** **9999998888**\n"
+            f"• **Chủ tài khoản:** CONG TY ABTRIP\n"
+            f"• **Số tiền:** **{price_disp}**\n"
+            f"• **Nội dung chuyển khoản:** **{pnr}**\n\n"
+            f"👉 Quét mã QR dưới đây để thanh toán nhanh qua ứng dụng Ngân hàng của bạn:\n\n"
+            f"<img src=\"{qr_url}\" style=\"max-width: 250px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 10px; border: 1px solid var(--border);\" />"
+        )
+        state["state"] = "idle"
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # 4. If state is "awaiting_pax_info"
     if state["state"] == "awaiting_pax_info":
         from app.services.llm_gateway import get_llm
         llm = get_llm()
@@ -978,27 +1010,36 @@ Câu chat của khách: "{user_msg}"
                 f"• **Ngày sinh:** {state['pax_dob']}\n"
                 f"• **Email:** {state['pax_email']}\n"
                 f"• **Số điện thoại:** {state['pax_phone']}\n\n"
-                f"👉 Bạn xác nhận thông tin trên là chính xác chứ? Hãy gõ **Xác nhận** hoặc **Đồng ý** để tôi tiến hành giữ chỗ và xuất vé cho bạn nhé!"
+                f"👉 Bạn xác nhận thông tin trên là chính xác chứ?\n\n"
+                f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Xác nhận đặt vé')\">✅ Xác nhận đặt vé</button>"
+                f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
             )
             
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
-    # 3. If state is "awaiting_confirm" and they say confirm
+    # 5. If state is "awaiting_confirm" and they say confirm
     if state["state"] == "awaiting_confirm" and any(w in user_msg.lower() for w in ("xác nhận", "đồng ý", "ok", "yes", "confirm", "chốt")):
         import random
         pnr = "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=6))
+        price_disp = f"{state['price']:,}đ" if state.get("price") else "Liên hệ"
         reply = (
             f"🎉 **GIỮ CHỖ THÀNH CÔNG!**\n\n"
-            f"• Mã đặt chỗ (PNR) của bạn là: **{pnr}**\n"
-            f"• Chuyến bay: **{state['flight']}** ({state['route']})\n"
-            f"• Hành khách: **{state['pax_name']}**\n\n"
+            f"• **Mã đặt chỗ (PNR):** **{pnr}**\n"
+            f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+            f"• **Hành khách:** {state['pax_name']}\n"
+            f"• **Ngày sinh:** {state['pax_dob']}\n"
+            f"• **Email:** {state['pax_email']}\n"
+            f"• **Số điện thoại:** {state['pax_phone']}\n"
+            f"• **Giá vé:** {price_disp}\n\n"
             f"Tôi đã gửi thông tin hướng dẫn thanh toán chi tiết qua Email **{state['pax_email']}** "
             f"và SMS tới số **{state['pax_phone']}**.\n\n"
-            f"Vui lòng thanh toán trước thời hạn hủy chỗ để được xuất vé tự động. Cảm ơn bạn!"
+            f"👉 Vui lòng thanh toán trước thời hạn để tránh bị hủy chỗ tự động:\n\n"
+            f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; background: var(--gold); cursor: pointer;\" onclick=\"sendSuggestion('Thanh toán {pnr}')\">💳 Thanh toán ngay</button>"
         )
-        state["state"] = "idle"
+        state["pnr"] = pnr
+        state["state"] = "hold_success"
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")

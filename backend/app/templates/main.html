@@ -762,7 +762,7 @@
                 </div>
                 <div style="text-align:right;">
                     <div class="flight-price" style="font-weight:700;color:var(--gold);margin-bottom:4px;">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
-                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''}')">Chọn</button>
+                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''} ${f.price || 0}')">Chọn</button>
                 </div>
             `;
             rowsContainer.appendChild(row);
