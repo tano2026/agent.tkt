@@ -753,16 +753,73 @@
         flights.forEach(f => {
             const row = document.createElement('div');
             row.className = 'flight-row';
+            row.style.display = 'flex';
+            row.style.alignItems = 'center';
+            row.style.justify = 'space-between';
+            row.style.padding = '12px';
+            row.style.marginBottom = '8px';
+            row.style.borderRadius = '8px';
+            row.style.background = '#fff';
+            row.style.border = '1px solid var(--border)';
+            row.style.boxShadow = '0 1px 3px rgba(0,0,0,0.03)';
+            
             const aName = airlineNames[f.airline] || f.airline;
+            
+            // Get airline colors/badge background
+            let badgeBg = 'rgba(0,0,0,0.05)';
+            let badgeColor = 'var(--text-muted)';
+            if (f.airline === 'VN') { badgeBg = 'rgba(0, 96, 100, 0.1)'; badgeColor = '#006064'; }
+            else if (f.airline === 'VJ') { badgeBg = 'rgba(224, 82, 82, 0.1)'; badgeColor = '#e05252'; }
+            else if (f.airline === 'QH') { badgeBg = 'rgba(46, 125, 50, 0.1)'; badgeColor = '#2e7d32'; }
+            else if (f.airline === 'VU') { badgeBg = 'rgba(255, 179, 0, 0.1)'; badgeColor = '#ffb300'; }
+
+            // Extract times
+            const timeParts = f.time ? f.time.split('→') : ['00:00', '00:00'];
+            const depTime = timeParts[0] ? timeParts[0].trim() : '00:00';
+            const arrTime = timeParts[1] ? timeParts[1].trim() : '00:00';
+
             row.innerHTML = `
-                <div>
-                    <div class="flight-route" style="font-weight:600;font-size:13px;color:var(--text);">${aName} (${f.flight_number}) — ${f.route || `${data.from}→${data.to}`}</div>
-                    <div class="flight-time" style="font-size:12px;margin:2px 0;">🕛 ${f.time || 'Xem chi tiết'} (${dateDisp})</div>
-                    <div style="font-size:11px;color:var(--text-muted);">${f.cabin || ''} | còn ${f.avail || 0} chỗ</div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                    <!-- Top Info: Brand & Badge -->
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600;">
+                        <span style="padding: 1px 5px; border-radius: 4px; font-size: 9px; font-weight: 800; background: ${badgeBg}; color: ${badgeColor};">${f.airline}</span>
+                        <span style="color: var(--text);">${aName}</span>
+                        <span style="color: var(--text-muted); font-weight: normal;">• ${f.flight_number}</span>
+                    </div>
+                    
+                    <!-- Middle Row: Timeline -->
+                    <div style="display: flex; align-items: center; gap: 12px; margin: 4px 0;">
+                        <div style="text-align: left;">
+                            <div style="font-size: 15px; font-weight: 700; color: var(--text); line-height: 1.1;">${depTime}</div>
+                            <div style="font-size: 10px; color: var(--text-muted); font-weight: 600; margin-top: 1px;">${data.from}</div>
+                        </div>
+                        
+                        <!-- Connecting Line graphic -->
+                        <div style="flex: 1; max-width: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative;">
+                            <span style="font-size: 8px; color: var(--text-muted); margin-bottom: 1px; font-weight: 600;">Bay thẳng</span>
+                            <div style="width: 100%; height: 2px; background: var(--border); position: relative; border-radius: 1px;">
+                                <div style="width: 4px; height: 4px; border-radius: 50%; background: var(--border); position: absolute; top: -1px; left: 0;"></div>
+                                <div style="width: 4px; height: 4px; border-radius: 50%; background: var(--gold); position: absolute; top: -1px; right: 0;"></div>
+                            </div>
+                        </div>
+                        
+                        <div style="text-align: right;">
+                            <div style="font-size: 15px; font-weight: 700; color: var(--text); line-height: 1.1;">${arrTime}</div>
+                            <div style="font-size: 10px; color: var(--text-muted); font-weight: 600; margin-top: 1px;">${data.to}</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bottom Info: Cabin & Seats -->
+                    <div style="font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+                        <span>💺 ${f.cabin ? f.cabin.split('(')[0].trim() : 'Phổ thông'}</span>
+                        <span style="color: ${f.avail <= 3 ? '#e05252' : 'var(--text-muted)'}; font-weight: ${f.avail <= 3 ? '700' : 'normal'};">• Còn ${f.avail} chỗ</span>
+                    </div>
                 </div>
-                <div style="text-align:right;">
-                    <div class="flight-price" style="font-weight:700;color:var(--gold);margin-bottom:4px;">${f.price ? f.price.toLocaleString() + 'đ' : 'Liên hệ'}</div>
-                    <button class="book-btn" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''} ${f.price || 0}')">Chọn</button>
+                
+                <!-- Price & Select Button -->
+                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: 12px; border-left: 1px solid var(--border); padding-left: 12px; min-width: 90px;">
+                    <div style="font-size: 15px; font-weight: 800; color: var(--gold);">${f.price ? f.price.toLocaleString() : '0'}đ</div>
+                    <button class="book-btn" style="padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11px; width: 100%;" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''} ${f.price || 0}')">Chọn</button>
                 </div>
             `;
             rowsContainer.appendChild(row);
