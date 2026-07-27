@@ -933,10 +933,169 @@ async def smart_chat(req: ChatRequest):
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
 
+    # 1.5. eSIM Booking State Machine
+    # Trigger eSIM flow
+    if any(w in user_msg.lower() for w in ("esim du lịch", "mua esim", "đặt esim")) and not state.get("state", "").startswith("awaiting_esim"):
+        state["state"] = "awaiting_esim_country"
+        state["esim_country"] = None
+        state["esim_days"] = None
+        state["esim_package"] = None
+        reply = (
+            f"📶 **BẠN MUỐN MUA eSIM DU LỊCH ĐI NƯỚC NÀO?**\n\n"
+            f"Vui lòng chọn quốc gia dưới đây hoặc gõ tên nước bạn muốn đến:\n\n"
+            f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Hàn Quốc')\">🇰🇷 Hàn Quốc</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Nhật Bản')\">🇯🇵 Nhật Bản</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Thái Lan')\">🇹🇭 Thái Lan</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Châu Âu')\">🇪🇺 Châu Âu</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Mua eSIM đi Mỹ')\">🇺🇸 Mỹ</button>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # Handle awaiting_esim_country
+    if state.get("state") == "awaiting_esim_country":
+        # Extract country
+        country = None
+        for c in ("Hàn Quốc", "Nhật Bản", "Thái Lan", "Châu Âu", "Mỹ", "Trung Quốc", "Singapore", "Malaysia"):
+            if c.lower() in user_msg.lower():
+                country = c
+                break
+        if not country:
+            # Fallback extract last word
+            country = user_msg.split()[-1]
+        
+        state["esim_country"] = country
+        state["state"] = "awaiting_esim_days"
+        reply = (
+            f"📅 **BẠN ĐI {country.upper()} TRONG MẤY NGÀY?**\n\n"
+            f"Vui lòng click chọn số ngày cho chuyến đi của bạn:\n\n"
+            f"<button class=\"header-btn-outline\" style=\"padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 5 ngày')\">📅 5 ngày</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 7 ngày')\">📅 7 ngày</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 10 ngày')\">📅 10 ngày</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Tôi đi {country} 15 ngày')\">📅 15 ngày</button>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # Handle awaiting_esim_days
+    if state.get("state") == "awaiting_esim_days":
+        # Extract days
+        import re
+        days_match = re.search(r"(\d+)\s*ngày", user_msg, re.IGNORECASE)
+        days = int(days_match.group(1)) if days_match else 7
+        
+        state["esim_days"] = days
+        state["state"] = "awaiting_esim_package"
+        
+        country = state.get("esim_country", "Nhật Bản")
+        
+        # Calculate dynamic prices based on region
+        c_lower = country.lower()
+        if any(w in c_lower for w in ("thái lan", "singapore", "malaysia", "đông nam á")):
+            p1, p3, p_unlim = 12000 * days, 18000 * days, 28000 * days
+        elif any(w in c_lower for w in ("hàn quốc", "nhật bản", "trung quốc", "châu á")):
+            p1, p3, p_unlim = 17000 * days, 25000 * days, 38000 * days
+        else:
+            p1, p3, p_unlim = 25000 * days, 35000 * days, 55000 * days
+            
+        p1 = max(79000, (p1 // 1000) * 1000)
+        p3 = max(119000, (p3 // 1000) * 1000)
+        p_unlim = max(189000, (p_unlim // 1000) * 1000)
+        
+        reply = (
+            f"📶 **CHỌN GÓI CƯỚC eSIM ĐI {country.upper()} ({days} NGÀY)**\n\n"
+            f"Tôi xin gửi bạn 3 gói cước dữ liệu tốc độ cao tối ưu nhất:\n\n"
+            f"<div style=\"display: flex; flex-direction: column; gap: 8px; margin-top: 10px;\">"
+            f"  <div style=\"display: flex; align-items: center; justify-content: space-between; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.02);\">"
+            f"    <div style=\"text-align: left;\">"
+            f"      <div style=\"font-weight: 700; font-size: 13px; color: var(--text);\">Gói Tiết Kiệm (1GB/Ngày)</div>"
+            f"      <div style=\"font-size: 11px; color: var(--text-muted);\">Phù hợp check bản đồ, nhắn tin chat</div>"
+            f"    </div>"
+            f"    <button class=\"book-btn\" style=\"padding: 6px 12px; font-size: 11px; border-radius: 4px; cursor: pointer;\" onclick=\"sendSuggestion('Đặt eSIM {country} {days}ngày gói 1GB/ngày {p1}')\">{p1:,}đ</button>"
+            f"  </div>"
+            f"  <div style=\"display: flex; align-items: center; justify-content: space-between; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.02);\">"
+            f"    <div style=\"text-align: left;\">"
+            f"      <div style=\"font-weight: 700; font-size: 13px; color: var(--text);\">Gói Phổ Thông (3GB/Ngày)</div>"
+            f"      <div style=\"font-size: 11px; color: var(--text-muted);\">Thoải mái lướt web, đăng ảnh, video call</div>"
+            f"    </div>"
+            f"    <button class=\"book-btn\" style=\"padding: 6px 12px; font-size: 11px; border-radius: 4px; cursor: pointer;\" onclick=\"sendSuggestion('Đặt eSIM {country} {days}ngày gói 3GB/ngày {p3}')\">{p3:,}đ</button>"
+            f"  </div>"
+            f"  <div style=\"display: flex; align-items: center; justify-content: space-between; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.02);\">"
+            f"    <div style=\"text-align: left;\">"
+            f"      <div style=\"font-weight: 700; font-size: 13px; color: var(--text);\">Gói Không Giới Hạn (Unlimited)</div>"
+            f"      <div style=\"font-size: 11px; color: var(--text-muted);\">Data tẹt ga tốc độ cao không lo hết mạng</div>"
+            f"    </div>"
+            f"    <button class=\"book-btn\" style=\"padding: 6px 12px; font-size: 11px; border-radius: 4px; cursor: pointer;\" onclick=\"sendSuggestion('Đặt eSIM {country} {days}ngày gói Unlimited {p_unlim}')\">{p_unlim:,}đ</button>"
+            f"  </div>"
+            f"</div>"
+            f"<div style=\"margin-top: 12px;\">"
+            f"  <button class=\"header-btn-outline\" style=\"width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: transparent; font-weight: bold; cursor: pointer; color: var(--text);\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
+            f"</div>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # Handle awaiting_esim_package
+    import re
+    esim_match = re.match(r"^Đặt eSIM\s+(.+)\s+(\d+)ngày\s+gói\s+(.+)\s+(\d+)", user_msg, re.IGNORECASE)
+    if esim_match or state.get("state") == "awaiting_esim_package":
+        if esim_match:
+            state["esim_country"] = esim_match.group(1).strip()
+            state["esim_days"] = int(esim_match.group(2))
+            state["esim_package"] = esim_match.group(3).strip()
+            state["price"] = int(esim_match.group(4))
+        
+        state["state"] = "awaiting_esim_confirm"
+        price_disp = f"{state['price']:,}đ"
+        
+        name_disp = state.get("pax_name") or "Nguyễn Văn A"
+        email_disp = state.get("pax_email") or "customer@gmail.com"
+        phone_disp = state.get("pax_phone") or "0987654321"
+        
+        reply = (
+            f"📝 **XÁC NHẬN ĐĂNG KÝ eSIM DU LỊCH**\n\n"
+            f"• **Quốc gia:** {state['esim_country']}\n"
+            f"• **Thời hạn:** {state['esim_days']} ngày\n"
+            f"• **Gói cước:** {state['esim_package']}\n"
+            f"• **Email nhận mã QR:** {email_disp}\n"
+            f"• **Số điện thoại nhận SMS:** {phone_disp}\n"
+            f"• **Tổng thanh toán:** **{price_disp}**\n\n"
+            f"👉 Nhận eSIM tự động qua Email và SMS sau khi thanh toán. Xác nhận đặt mua?\n\n"
+            f"<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;\" onclick=\"sendSuggestion('Xác nhận đặt eSIM')\">✅ Xác nhận đặt mua</button>"
+            f"<button class=\"header-btn-outline\" style=\"margin-left: 8px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;\" onclick=\"sendSuggestion('Hủy bỏ')\">❌ Hủy</button>"
+        )
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
+    # Handle confirming eSIM
+    if state.get("state") == "awaiting_esim_confirm" and any(w in user_msg.lower() for w in ("xác nhận", "đồng ý", "ok", "yes", "confirm", "chốt")):
+        import random
+        pnr = "ESIM" + "".join(random.choices("0123456789", k=6))
+        price_disp = f"{state['price']:,}đ"
+        
+        reply = (
+            f"🎉 **ĐẶT eSIM THÀNH CÔNG!**\n\n"
+            f"• **Mã đơn hàng:** **{pnr}**\n"
+            f"• **Quốc gia:** {state['esim_country']}\n"
+            f"• **Gói cước:** {state['esim_package']} ({state['esim_days']} ngày)\n"
+            f"• **Tổng thanh toán:** **{price_disp}**\n\n"
+            f"👉 Vui lòng thanh toán chuyển khoản dưới đây để nhận mã QR kích hoạt eSIM tự động:"
+            f"\n\n<button class=\"book-btn\" style=\"padding: 8px 16px; border-radius: 8px; font-weight: bold; background: var(--gold); cursor: pointer;\" onclick=\"sendSuggestion('Thanh toán {pnr}')\">💳 Thanh toán ngay</button>"
+        )
+        state["pnr"] = pnr
+        state["state"] = "hold_success"
+        history.append({"role": "user", "content": user_msg})
+        history.append({"role": "assistant", "content": reply})
+        return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
+
     # 2. Handle Cancel booking request
-    if state["state"] in ("awaiting_pax_info", "awaiting_ancillaries", "awaiting_confirm") and any(w in user_msg.lower() for w in ("hủy", "cancel", "từ chối", "không đồng ý")):
+    if (state["state"] in ("awaiting_pax_info", "awaiting_ancillaries", "awaiting_confirm") or state.get("state", "").startswith("awaiting_esim")) and any(w in user_msg.lower() for w in ("hủy", "cancel", "từ chối", "không đồng ý", "hủy bỏ")):
         state["state"] = "idle"
-        reply = "Đã hủy tiến trình giữ chỗ vé máy bay. Tôi có thể giúp gì khác cho bạn?"
+        reply = "Đã hủy tiến trình giao dịch. Tôi có thể giúp gì khác cho bạn?"
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": reply})
         return StreamingResponse(_sse_stream(reply, sid), media_type="text/event-stream")
