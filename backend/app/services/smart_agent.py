@@ -884,23 +884,29 @@ async def smart_chat(req: ChatRequest):
         _session_states[sid] = {
             "flight": None,
             "route": None,
+            "price": 0,
+            "date": None,
+            "time": None,
             "pax_name": None,
             "pax_dob": None,
             "pax_email": None,
             "pax_phone": None,
+            "ancillaries": "Không đăng ký",
             "state": "idle"
         }
     state = _session_states[sid]
 
     user_msg = req.message.strip()
 
-    # 1. Detect "Đặt vé <FlightNumber> <Route> <Price>" (e.g. from frontend select button)
+    # 1. Detect "Đặt vé <FlightNumber> <Route> <Price> <Date> <Time>" (e.g. from frontend select button)
     import re
-    select_match = re.match(r"^Đặt vé\s+(\S+)\s+(\S+)(?:\s+(\d+))?", user_msg, re.IGNORECASE)
+    select_match = re.match(r"^Đặt vé\s+(\S+)\s+(\S+)(?:\s+(\d+))?(?:\s+(\d+))?(?:\s+(\S+))?", user_msg, re.IGNORECASE)
     if select_match:
         state["flight"] = select_match.group(1).upper()
         state["route"] = select_match.group(2).upper()
         state["price"] = int(select_match.group(3)) if select_match.group(3) else 0
+        state["date"] = select_match.group(4)
+        state["time"] = select_match.group(5)
         state["state"] = "awaiting_pax_info"
         
         state["pax_name"] = None
@@ -909,8 +915,13 @@ async def smart_chat(req: ChatRequest):
         state["pax_phone"] = None
         state["ancillaries"] = "Không đăng ký"
         
+        raw_date = state.get("date") or ""
+        date_disp = f"{raw_date[0:2]}/{raw_date[2:4]}/{raw_date[4:]}" if len(raw_date) == 8 else raw_date
+        raw_time = state.get("time") or ""
+        time_disp = raw_time.replace("→", " → ")
+        
         reply = (
-            f"Cảm ơn bạn đã chọn chuyến bay **{state['flight']}** ({state['route']}).\n\n"
+            f"Cảm ơn bạn đã chọn chuyến bay **{state['flight']}** ({state['route']}) ngày **{date_disp}** lúc **{time_disp}**.\n\n"
             f"Để tôi tiến hành giữ chỗ, vui lòng cung cấp thông tin người bay bao gồm:\n"
             f"• **Họ và tên**\n"
             f"• **Ngày sinh**\n"
@@ -1107,9 +1118,20 @@ Câu chat: "{user_msg}"
         state["state"] = "awaiting_confirm"
         
         price_disp = f"{state['price']:,}đ"
+        
+        raw_date = state.get("date") or ""
+        date_disp = f"{raw_date[0:2]}/{raw_date[2:4]}/{raw_date[4:]}" if len(raw_date) == 8 else raw_date
+        raw_time = state.get("time") or ""
+        time_disp = raw_time.replace("→", " → ")
+        airline_code = state.get("flight", "")[0:2]
+        airline_name = {"VN": "Vietnam Airlines", "VJ": "Vietjet Air", "QH": "Bamboo Airways", "VU": "Vietravel Airlines"}.get(airline_code, airline_code)
+        
         reply = (
             f"📝 **XÁC NHẬN THÔNG TIN ĐẶT VÉ**\n\n"
+            f"• **Hãng bay:** {airline_name}\n"
             f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+            f"• **Ngày bay:** {date_disp}\n"
+            f"• **Giờ bay:** {time_disp}\n"
             f"• **Hành khách:** {state['pax_name']}\n"
             f"• **Ngày sinh:** {state['pax_dob']}\n"
             f"• **Email:** {state['pax_email']}\n"
@@ -1130,10 +1152,21 @@ Câu chat: "{user_msg}"
         pnr = "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=6))
         price_disp = f"{state['price']:,}đ" if state.get("price") else "Liên hệ"
         deadline = (datetime.now() + timedelta(hours=4)).strftime("%H:%M ngày %d/%m/%Y")
+        
+        raw_date = state.get("date") or ""
+        date_disp = f"{raw_date[0:2]}/{raw_date[2:4]}/{raw_date[4:]}" if len(raw_date) == 8 else raw_date
+        raw_time = state.get("time") or ""
+        time_disp = raw_time.replace("→", " → ")
+        airline_code = state.get("flight", "")[0:2]
+        airline_name = {"VN": "Vietnam Airlines", "VJ": "Vietjet Air", "QH": "Bamboo Airways", "VU": "Vietravel Airlines"}.get(airline_code, airline_code)
+
         reply = (
             f"🎉 **GIỮ CHỖ THÀNH CÔNG!**\n\n"
             f"• **Mã đặt chỗ (PNR):** **{pnr}**\n"
+            f"• **Hãng bay:** {airline_name}\n"
             f"• **Chuyến bay:** {state['flight']} ({state['route']})\n"
+            f"• **Ngày bay:** {date_disp}\n"
+            f"• **Giờ bay:** {time_disp}\n"
             f"• **Hành khách:** {state['pax_name']}\n"
             f"• **Ngày sinh:** {state['pax_dob']}\n"
             f"• **Email:** {state['pax_email']}\n"

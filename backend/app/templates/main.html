@@ -822,7 +822,7 @@
                 <!-- Price & Select Button -->
                 <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: 12px; border-left: 1px solid var(--border); padding-left: 12px; min-width: 90px;">
                     <div style="font-size: 15px; font-weight: 800; color: var(--gold);">${f.price ? f.price.toLocaleString() : '0'}đ</div>
-                    <button class="book-btn" style="padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11px; width: 100%;" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''} ${f.price || 0}')">Chọn</button>
+                    <button class="book-btn" style="padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11px; width: 100%;" onclick="sendSuggestion('Đặt vé ${f.flight_number || ''} ${f.route || ''} ${f.price || 0} ${rawDate} ${f.time ? f.time.replace(/\s+/g, '') : ''}')">Chọn</button>
                 </div>
             `;
             rowsContainer.appendChild(row);
